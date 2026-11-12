@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // metricsReport says which report brought the metrics.

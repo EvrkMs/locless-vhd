@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // maxResponse bounds one answer: a batch of blocks, or the list of a large disk.

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 func TestRecorderCountsStepsWorkAndAmounts(t *testing.T) {

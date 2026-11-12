@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"fogs/agent/ui"
-	"fogs/proto"
-	"fogs/recovery"
+	"locless-vhd/agent/ui"
+	"locless-vhd/proto"
+	"locless-vhd/recovery"
 )
 
 // cloneBatch is how many blocks go to the server in one round. It bounds memory

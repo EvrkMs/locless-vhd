@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"fogs/agent/ui"
+	"locless-vhd/agent/ui"
 )
 
 // demoCycle is how long a fake task takes to reach 100%.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // shrinkSlack is the free space left in a shrunk volume. FOG leaves at least 500 MB.

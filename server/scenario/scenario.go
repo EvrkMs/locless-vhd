@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 // Store is the part of the database a run uses.

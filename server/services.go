@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"fogs/recovery"
-	"fogs/server/web"
+	"locless-vhd/recovery"
+	"locless-vhd/server/web"
 )
 
 // recheckEvery is how often the client services look again whether they can run:

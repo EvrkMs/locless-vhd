@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // mustBeVirtual stops the test unless the disk is a VHD. This test wipes a disk.

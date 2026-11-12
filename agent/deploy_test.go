@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 // fakeTarget is a disk that records what the agent does to it.

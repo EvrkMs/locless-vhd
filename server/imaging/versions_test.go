@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 // disk reads what a chain says the disk holds.

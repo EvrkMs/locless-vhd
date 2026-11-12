@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // recorder collects the metrics of one task: the stages by the clock, the time

@@ -24,15 +24,15 @@ import (
 	"sync"
 	"time"
 
-	"fogs/proto"
-	"fogs/recovery"
-	"fogs/server/boot"
-	"fogs/server/dhcp"
-	"fogs/server/imaging"
-	"fogs/server/scenario"
-	"fogs/server/store"
-	"fogs/server/tftp"
-	"fogs/server/web"
+	"locless-vhd/proto"
+	"locless-vhd/recovery"
+	"locless-vhd/server/boot"
+	"locless-vhd/server/dhcp"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/scenario"
+	"locless-vhd/server/store"
+	"locless-vhd/server/tftp"
+	"locless-vhd/server/web"
 )
 
 // Folders inside the root.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 func TestFormatGUID(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fogs/agent/ui"
+	"locless-vhd/agent/ui"
 )
 
 // traffic counts the bytes the agent sends to the server and receives from it:

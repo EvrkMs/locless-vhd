@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fogs/agent/ui"
-	"fogs/proto"
-	"fogs/recovery"
+	"locless-vhd/agent/ui"
+	"locless-vhd/proto"
+	"locless-vhd/recovery"
 )
 
 // How long the agent keeps trying before it shows an error.

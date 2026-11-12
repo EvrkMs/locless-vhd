@@ -7,9 +7,9 @@ import (
 	"io"
 	"net/http"
 
-	"fogs/proto"
-	"fogs/server/imaging"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/store"
 )
 
 // DeployManager sends images.

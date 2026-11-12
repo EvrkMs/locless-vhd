@@ -9,7 +9,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // Device control codes, all read-only queries.

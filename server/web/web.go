@@ -19,8 +19,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"fogs/server/scenario"
-	"fogs/server/store"
+	"locless-vhd/server/scenario"
+	"locless-vhd/server/store"
 )
 
 //go:embed index.html

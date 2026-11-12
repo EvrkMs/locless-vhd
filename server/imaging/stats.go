@@ -3,7 +3,7 @@ package imaging
 import (
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // Kinds of server work in the metrics of a task.

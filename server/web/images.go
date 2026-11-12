@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"fogs/proto"
-	"fogs/server/imaging"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/store"
 )
 
 // createImage adds an image and its folder inside the image directory.

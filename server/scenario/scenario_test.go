@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"fogs/server/store"
+	"locless-vhd/server/store"
 )
 
 var (

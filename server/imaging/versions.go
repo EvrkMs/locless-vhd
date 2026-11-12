@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"fogs/proto"
-	"fogs/recovery"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/recovery"
+	"locless-vhd/server/store"
 )
 
 // Errors the operator can be told about.

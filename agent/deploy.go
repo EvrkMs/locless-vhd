@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"fogs/agent/ui"
-	"fogs/proto"
-	"fogs/recovery"
+	"locless-vhd/agent/ui"
+	"locless-vhd/proto"
+	"locless-vhd/recovery"
 )
 
 // confirmSeconds is how long the screen warns before the disk is touched. It is

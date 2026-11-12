@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fogs/agent/ui"
-	"fogs/proto"
+	"locless-vhd/agent/ui"
+	"locless-vhd/proto"
 )
 
 func init() {

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"fogs/server/imaging"
-	"fogs/server/scenario"
-	"fogs/server/store"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/scenario"
+	"locless-vhd/server/store"
 )
 
 const addr = "127.0.0.1:8081"

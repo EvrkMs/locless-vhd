@@ -10,7 +10,7 @@ import (
 	"net"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver, pure Go
 )

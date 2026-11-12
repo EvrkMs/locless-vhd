@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"fogs/proto"
-	"fogs/server/imaging"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/store"
 )
 
 // Limits for one request. A batch of blocks is far below maxPutBody; the agent

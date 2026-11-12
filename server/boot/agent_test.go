@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"fogs/proto"
-	"fogs/server/imaging"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/imaging"
+	"locless-vhd/server/store"
 )
 
 var testMAC = net.HardwareAddr{0x04, 0x7c, 0x16, 0xe7, 0xd2, 0x1e}

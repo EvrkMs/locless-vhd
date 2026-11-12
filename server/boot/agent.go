@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 // maxReportText bounds the text an agent may store. Anyone on the network can

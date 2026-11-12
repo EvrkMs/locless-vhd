@@ -21,8 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 const incomingDir = ".incoming"

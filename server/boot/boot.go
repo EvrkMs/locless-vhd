@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // AutoexecName is the file iPXE asks the boot server for right after it starts.

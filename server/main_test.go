@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"fogs/server/web"
+	"locless-vhd/server/web"
 )
 
 // TestPanelStaysLocal guards the panel: it has no login and can take over PCs.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // started counts the PCs the handler sent into WinPE.

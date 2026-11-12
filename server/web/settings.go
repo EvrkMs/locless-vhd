@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"fogs/proto"
-	"fogs/server/store"
+	"locless-vhd/proto"
+	"locless-vhd/server/store"
 )
 
 func (h *server) settings(w http.ResponseWriter, r *http.Request) {

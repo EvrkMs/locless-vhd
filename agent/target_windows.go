@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // Control codes that change a disk. This file is the only place that uses them.

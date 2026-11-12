@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"fogs/server/scenario"
-	"fogs/server/store"
+	"locless-vhd/server/scenario"
+	"locless-vhd/server/store"
 )
 
 // startScenario starts the measuring scenario on a PC with the image the PC has.

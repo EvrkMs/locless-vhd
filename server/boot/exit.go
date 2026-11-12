@@ -3,7 +3,7 @@ package boot
 import (
 	"fmt"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // RefindPath is the rEFInd loader inside the served directory, used by ExitRefind.

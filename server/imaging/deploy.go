@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fogs/proto"
+	"locless-vhd/proto"
 )
 
 // ErrNoImage means the image has no versions to deploy.

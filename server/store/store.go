@@ -32,6 +32,8 @@ const (
 	TaskDeploy = proto.TaskKindDeploy
 	// TaskFormat wipes the disk of the PC into one empty volume.
 	TaskFormat = proto.TaskKindFormat
+	// TaskPrepare wipes the disk of the PC into EFI, MSR and the store for virtual disks.
+	TaskPrepare = proto.TaskKindPrepare
 )
 
 // Task statuses.

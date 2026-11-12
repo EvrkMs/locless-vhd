@@ -292,6 +292,54 @@ func (w *writeDisk) Format(label string) error {
 		"format fs=ntfs quick label="+label)
 }
 
+// MakeStore wipes the disk and lays it out for Windows booted from a virtual disk.
+// The table is written by a request, like the table of an image, so the store gets
+// its GPT name and the attribute that hides it; diskpart then formats by number.
+func (w *writeDisk) MakeStore() error {
+	if !w.allowFormat && !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
+		return errors.New("подготовка диска работает только в WinPE")
+	}
+	if err := runDiskpart(fmt.Sprintf("select disk %d", w.number), "clean"); err != nil {
+		return err
+	}
+	disk, err := openWritable(fmt.Sprintf(`\\.\PhysicalDrive%d`, w.number))
+	if err != nil {
+		return err
+	}
+	if err := writeStoreTable(disk, w.sector); err != nil {
+		syscall.CloseHandle(disk)
+		return err
+	}
+	syscall.CloseHandle(disk)
+	return runDiskpart(fmt.Sprintf("select disk %d", w.number), "rescan",
+		"select partition 1", "format fs=fat32 quick label=System",
+		"select partition 3", "format fs=ntfs quick label="+proto.StoreLabel)
+}
+
+// writeStoreTable puts an empty GPT on the disk and then the table of the store
+// within the usable area Windows gave that GPT.
+func writeStoreTable(disk syscall.Handle, sector uint32) error {
+	id := proto.NewID()
+	layout, err := emptyGPT(disk, id[:])
+	if err != nil {
+		return err
+	}
+	first := binary.LittleEndian.Uint64(layout[24:])
+	end := first + binary.LittleEndian.Uint64(layout[32:])
+	parts, err := proto.StoreLayout(first, end, sector)
+	if err != nil {
+		return err
+	}
+	m := proto.Manifest{DiskGUID: formatGUID(layout[8:24]), Partitions: parts}
+	if _, err := control2(disk, ioctlSetDriveLayoutEx, buildLayout(layout, m)); err != nil {
+		return fmt.Errorf("таблица разделов: %w", err)
+	}
+	if _, err := control2(disk, ioctlUpdateProperties, nil); err != nil {
+		return fmt.Errorf("обновление диска: %w", err)
+	}
+	return nil
+}
+
 // createGPT puts an empty GPT on a disk that has no such table, and reads the
 // usable area Windows gave it.
 func (w *writeDisk) createGPT(disk syscall.Handle, m proto.Manifest) error {

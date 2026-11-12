@@ -371,6 +371,15 @@ func TestTasksUseTheImageOfThePC(t *testing.T) {
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"wipe"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown kind: %d", w.Code)
 	}
+	if w := do(h, http.MethodPost, path+"/task", `{"kind":"prepare"}`); w.Code != http.StatusCreated {
+		t.Fatalf("prepare: %d %s", w.Code, w.Body)
+	}
+	if hosts, _ := s.Hosts(ctx); hosts[0].Task == nil || hosts[0].Task.Kind != store.TaskPrepare || hosts[0].Task.Image != "" {
+		t.Fatalf("prepare task: %+v", hosts[0].Task)
+	}
+	if w := do(h, http.MethodDelete, path+"/task", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("cancel prepare: %d", w.Code)
+	}
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"clone"}`); w.Code != http.StatusCreated {
 		t.Fatalf("clone: %d %s", w.Code, w.Body)
 	}

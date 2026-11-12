@@ -27,6 +27,8 @@ var deployStages = []string{"Сеть", "Сервер", "Запись диска
 
 var formatStages = []string{"Сеть", "Сервер", "Форматирование", "Завершение"}
 
+var prepareStages = []string{"Сеть", "Сервер", "Подготовка диска", "Завершение"}
+
 // target is a disk about to be overwritten.
 type target interface {
 	Describe() string
@@ -46,6 +48,10 @@ type target interface {
 	// Format wipes the disk and leaves one empty NTFS volume with this label on all
 	// of it, without Prepare. Nothing else may hold the disk.
 	Format(label string) error
+	// MakeStore wipes the disk and lays it out for Windows booted from a virtual
+	// disk, see proto.StoreLayout: an empty EFI, MSR and the store formatted as
+	// NTFS. Like Format it needs nothing else holding the disk.
+	MakeStore() error
 	// MakeBootable adds Windows to the boot menu of the firmware, which a disk
 	// image cannot carry. It runs after Close, with the partitions back in Windows.
 	MakeBootable(m proto.Manifest) error
@@ -256,14 +262,39 @@ func controlSet(query string) (string, error) {
 	return "", errors.New("в реестре не найден текущий ControlSet")
 }
 
-// runFormat wipes the disk into one empty volume.
-func (w *worker) runFormat(task *proto.AgentTask) error {
-	w.names = formatStages
+// wipeJob is a task that wipes the disk and lays it out anew, with no image.
+type wipeJob struct {
+	stages  []string
+	title   string // on the screen while the task runs
+	result  string // what the disk becomes, for the countdown and the report
+	caption string // under the spinner while the disk is changed
+	failure string // starts the error
+	done    string // the last screen
+	run     func(target) error
+}
+
+var formatJob = wipeJob{
+	stages: formatStages,
+	title:  "Форматирование диска", result: "том " + proto.FormatLabel, caption: "форматирование",
+	failure: "не удалось отформатировать диск", done: "Диск отформатирован: том " + proto.FormatLabel,
+	run: func(dst target) error { return dst.Format(proto.FormatLabel) },
+}
+
+var prepareJob = wipeJob{
+	stages: prepareStages,
+	title:  "Подготовка диска", result: "EFI, MSR и хранилище " + proto.StoreLabel, caption: "разметка",
+	failure: "не удалось подготовить диск", done: "Диск подготовлен: хранилище " + proto.StoreLabel,
+	run: func(dst target) error { return dst.MakeStore() },
+}
+
+// runWipe runs a wipeJob after the countdown that lets the PC be saved.
+func (w *worker) runWipe(task *proto.AgentTask, job wipeJob) error {
+	w.names = job.stages
 	w.setStage(stageCheck)
 	w.screen.update(func(st *ui.State) {
 		st.Phase, st.Percent = ui.PhaseDeploy, 0
 		st.Center, st.Caption = "0%", "подготовка"
-		st.Title, st.Detail = "Форматирование диска", "Том "+proto.FormatLabel
+		st.Title, st.Detail = job.title, job.result
 	})
 	w.rec = newRecorder(w.attempts)
 	w.rec.Step("Открытие диска")
@@ -275,7 +306,7 @@ func (w *worker) runFormat(task *proto.AgentTask) error {
 	w.screen.log("диск: " + dst.Describe())
 
 	w.rec.Step("Отсчёт перед стиранием")
-	if !w.confirmWipe(dst, "том "+proto.FormatLabel) {
+	if !w.confirmWipe(dst, job.result) {
 		w.screen.log("отменено на компьютере")
 		if err := w.finish(task.ID, false, "отменено на компьютере"); err != nil {
 			return err
@@ -284,23 +315,23 @@ func (w *worker) runFormat(task *proto.AgentTask) error {
 		return nil
 	}
 	w.screen.update(func(st *ui.State) {
-		st.Center, st.Caption, st.Hint = "…", "форматирование", "Не выключайте компьютер"
+		st.Center, st.Caption, st.Hint = "…", job.caption, "Не выключайте компьютер"
 	})
 	w.rec.Step("Разметка и форматирование")
-	if err := dst.Format(proto.FormatLabel); err != nil {
-		return fmt.Errorf("не удалось отформатировать диск: %w", err)
+	if err := job.run(dst); err != nil {
+		return fmt.Errorf("%s: %w", job.failure, err)
 	}
 	if len(task.Table) > 0 {
 		w.forgetTable() // the volume it was saved for is gone
 	}
 	w.setStage(stageFinish)
 	w.rec.Step("Отчёт серверу")
-	message := dst.Describe() + ", том " + proto.FormatLabel
+	message := dst.Describe() + ", " + job.result
 	if err := w.finish(task.ID, true, message); err != nil {
 		return err
 	}
 	w.screen.log("готово: " + message)
-	w.showResult("Готово", "Диск отформатирован: том "+proto.FormatLabel)
+	w.showResult("Готово", job.done)
 	return nil
 }
 

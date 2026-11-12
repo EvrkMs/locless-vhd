@@ -289,7 +289,7 @@ func (h *server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Kind {
-	case store.TaskAgent, store.TaskFormat:
+	case store.TaskAgent, store.TaskFormat, store.TaskPrepare:
 		image = ""
 	case store.TaskClone, store.TaskDeploy:
 		if image == "" {

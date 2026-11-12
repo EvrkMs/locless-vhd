@@ -26,6 +26,7 @@ type fakeTarget struct {
 	bootErr   error
 	grown     bool
 	formatted string
+	store     bool  // MakeStore ran
 	writeErr  error // what a write fails with after failAfter good ones
 	failAfter int
 	writes    int
@@ -42,7 +43,8 @@ func (d *fakeTarget) Format(label string) error {
 	d.formatted = label
 	return nil
 }
-func (d *fakeTarget) Close() error { d.closed = true; return nil }
+func (d *fakeTarget) MakeStore() error { d.store = true; return nil }
+func (d *fakeTarget) Close() error     { d.closed = true; return nil }
 func (d *fakeTarget) MakeBootable(proto.Manifest) error {
 	if !d.closed {
 		return errors.New("bootable before the disk was released")
@@ -585,5 +587,55 @@ func TestEscapeStopsTheFormat(t *testing.T) {
 	}
 	if d.formatted != "" {
 		t.Fatal("the disk was formatted after Esc")
+	}
+}
+
+// TestPrepareMakesStore: like format, the countdown runs first and no image is needed.
+func TestPrepareMakesStore(t *testing.T) {
+	e := newCloneEnv(t)
+	ctx := context.Background()
+	if _, err := e.s.CreateTask(ctx, e.host.ID, store.TaskPrepare, ""); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	d := &fakeTarget{}
+	w, _ := testWorker(e.url)
+	w.abort = make(chan struct{}, 1)
+	w.openTarget = func() (target, error) { return d, nil }
+	ticks := 0
+	w.sleep = func(time.Duration) {
+		if d.store {
+			t.Error("laid out before the countdown ended")
+		}
+		ticks++
+	}
+	if err := w.attempt(); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if !d.store || d.formatted != "" || ticks != confirmSeconds || !d.closed {
+		t.Fatalf("store %v, formatted %q, ticks %d, closed %v", d.store, d.formatted, ticks, d.closed)
+	}
+	hosts, _ := e.s.Hosts(ctx)
+	if h := hosts[0]; h.Task != nil || h.LastTask == nil || h.LastTask.Status != store.StatusDone ||
+		!strings.Contains(h.LastTask.Message, proto.StoreLabel) {
+		t.Fatalf("host: %+v, last: %+v", h, h.LastTask)
+	}
+}
+
+// TestEscapeStopsThePrepare: Esc leaves the disk as it was.
+func TestEscapeStopsThePrepare(t *testing.T) {
+	e := newCloneEnv(t)
+	if _, err := e.s.CreateTask(context.Background(), e.host.ID, store.TaskPrepare, ""); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	d := &fakeTarget{}
+	w, _ := testWorker(e.url)
+	w.abort = make(chan struct{}, 1)
+	w.abort <- struct{}{}
+	w.openTarget = func() (target, error) { return d, nil }
+	if err := w.attempt(); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if d.store {
+		t.Fatal("the disk was laid out after Esc")
 	}
 }

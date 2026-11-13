@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/sys/windows"
+
 	"locless-vhd/proto"
 )
 
@@ -93,6 +95,9 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	}
 	if err := mountStore(d.phys.number); err != nil {
 		return err
+	}
+	if err := protectStore(storeLetter + `:\`); err != nil {
+		return fmt.Errorf("права на хранилище: %w", err)
 	}
 	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.DiffFileB, proto.BaseFile} {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -315,4 +320,31 @@ func mountStore(disk int) error {
 
 func storePath(name string) string {
 	return filepath.Join(storeLetter+`:\`, name)
+}
+
+// storeSDDL gives the store to SYSTEM: full control for it, which the boot
+// loader, the agent in WinPE and the reset service all run as, and reading for
+// administrators and signed-in users. The DACL is protected, so nothing else is
+// inherited, and files made later get the same through OICI.
+const storeSDDL = "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FRFX;;;BA)(A;OICI;FRFX;;;AU)"
+
+// protectStore replaces the owner and the whole DACL of the store root. An owner
+// may always rewrite the DACL, so the owner becomes SYSTEM too. Administrators can
+// still take ownership back: this keeps the players out, not the operator.
+func protectStore(root string) error {
+	sd, err := windows.SecurityDescriptorFromString(storeSDDL)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(root, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner, nil, dacl, nil)
 }

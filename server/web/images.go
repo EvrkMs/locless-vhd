@@ -295,8 +295,8 @@ func (h *server) setImageVHDSize(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.GiB < store.MinVHDSize>>30 || in.GiB > store.MaxVHDSize>>30 { // before the shift can overflow
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Р Р°Р·РјРµСЂ VHDX РѕС‚ %d РґРѕ %d Р“Р‘", store.MinVHDSize>>30, store.MaxVHDSize>>30))
+	if in.GiB != 0 && (in.GiB < store.MinVHDSize>>30 || in.GiB > store.MaxVHDSize>>30) { // before the shift can overflow
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Размер VHDX: 0 (по месту на ПК) или от %d до %d ГБ", store.MinVHDSize>>30, store.MaxVHDSize>>30))
 		return
 	}
 	h.done(w, h.store.SetImageVHDSize(r.Context(), r.PathValue("name"), in.GiB<<30))

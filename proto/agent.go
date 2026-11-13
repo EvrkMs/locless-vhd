@@ -29,7 +29,8 @@ type AgentTask struct {
 	ID    int64  `json:"id"`
 	Kind  string `json:"kind"`
 	Image string `json:"image,omitempty"` // for TaskKindClone
-	// VHDSize is the size of the virtual disk for TaskKindDeployVHD, in bytes.
+	// VHDSize is the size of the virtual disk for TaskKindDeployVHD, in bytes; 0
+	// sizes it by the store of the PC, see AutoVHDSize.
 	VHDSize uint64 `json:"vhdSize,omitempty"`
 	// Accounts for TaskKindDeployVHD, from the settings of the panel.
 	Accounts *Accounts `json:"accounts,omitempty"`

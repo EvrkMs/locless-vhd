@@ -171,13 +171,38 @@ const StoreSpare = 4 << 30
 // the stretched volume and the name and service of the PC.
 const LocalSpare = 1 << 30
 
-// StoreNeed returns the size of store a deploy into VHDX needs. Until it is
-// measured how far Windows grows the files when it boots from them, the base and
-// the differencing disk are each counted at the full virtual size. The page file
-// and memory dumps of that Windows live on the store too, so the memory of the
-// PC is added.
+// StoreNeed returns the size of store a deploy into VHDX needs.
+//
+// The deploy turns off the growing of the virtual disks to full size at boot
+// (VirtualDiskExpandOnMount), so the files take what is written into them. Every
+// write of Windows lands either in free space of the virtual disk, which the base
+// file does not hold, or over data the base already holds: the second kind is
+// the only one the store pays for twice, and overwriteMargin covers it. The page
+// file and memory dumps live on the store too, so the memory of the PC is added.
 func StoreNeed(vhdSize, memory uint64) uint64 {
-	return 2*vhdSize + memory + StoreSpare + LocalSpare
+	return vhdSize + overwriteMargin(vhdSize) + memory + StoreSpare + LocalSpare
+}
+
+// overwriteMargin is room for a session that rewrites data the base holds:
+// a tenth of the virtual disk, at least 8 GiB.
+func overwriteMargin(vhdSize uint64) uint64 {
+	return max(vhdSize/10, 8<<30)
+}
+
+// AutoVHDSize is the largest virtual disk, in whole GiB, that StoreNeed lets a
+// store of this size hold, or 0 if none fits.
+func AutoVHDSize(store, memory uint64) uint64 {
+	fixed := memory + StoreSpare + LocalSpare
+	if store <= fixed {
+		return 0
+	}
+	room := store - fixed
+	size := min(room-min(room, 8<<30), room/11*10) // past 80 GiB the tenth is larger
+	size = size >> 30 << 30
+	for size > 0 && StoreNeed(size, memory) > store {
+		size -= 1 << 30
+	}
+	return size
 }
 
 // StoreState is the state file on the store: what the base holds, so the server

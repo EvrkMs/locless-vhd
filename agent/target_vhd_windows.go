@@ -63,8 +63,17 @@ func openVHDTarget(size uint64) (vhdTarget, error) {
 		}
 		d.store = parts[2].Size
 	}
+	if d.size == 0 { // the image leaves the size to the store
+		if d.size = proto.AutoVHDSize(d.store, physicalMemory()); d.size == 0 {
+			return nil, fmt.Errorf("хранилище %s слишком мало для VHDX", formatBytes(d.store))
+		}
+	}
 	return d, nil
 }
+
+// VHDSize is the size the virtual disk gets, chosen by the store when the image
+// leaves it open.
+func (d *vhdDisk) VHDSize() uint64 { return d.size }
 
 func (d *vhdDisk) Describe() string {
 	s := d.phys.Describe() + ", VHDX " + formatBytes(d.size)
@@ -78,7 +87,7 @@ func (d *vhdDisk) Describe() string {
 // the worst case of proto.StoreNeed.
 func (d *vhdDisk) Fit(m proto.Manifest) (proto.Manifest, error) {
 	if need := proto.StoreNeed(d.size, physicalMemory()); d.store < need {
-		return proto.Manifest{}, fmt.Errorf("хранилищу нужно %s (VHDX %s дважды, память ПК и запас), а на диске %s",
+		return proto.Manifest{}, fmt.Errorf("хранилищу нужно %s (VHDX %s, запас на перезапись, память ПК), а на диске %s",
 			formatBytes(need), formatBytes(d.size), formatBytes(d.store))
 	}
 	return fitFresh(m, d.size)
@@ -292,6 +301,13 @@ func (d *vhdDisk) installReset() (err error) {
 		if err := runReg("add", key, "/v", v[0], "/t", v[1], "/d", v[2], "/f"); err != nil {
 			return err
 		}
+	}
+	// Windows booted from a dynamic virtual disk grows it to full size first, to
+	// be sure the store holds it. With the disk as large as the store allows that
+	// would not fit; StoreNeed counts what the files can really take instead.
+	expand := hive + `\` + set + `\Services\FsDepends\Parameters`
+	if err := runReg("add", expand, "/v", "VirtualDiskExpandOnMount", "/t", "REG_DWORD", "/d", "4", "/f"); err != nil {
+		return err
 	}
 	return enableUAC()
 }

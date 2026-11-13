@@ -118,6 +118,9 @@ func gptArea(size uint64, sector uint32) (uint64, uint64) {
 // vhdTarget is a target that writes the image into a virtual disk on the store.
 type vhdTarget interface {
 	target
+	// VHDSize is the size of the virtual disk, chosen by the store if the image
+	// leaves it open.
+	VHDSize() uint64
 	// Boot puts the differencing disk on top of the written base, makes Windows
 	// boot from it and records state on the store. It runs after SetName. With
 	// accounts the first boot sets them up and then makes the differencing disk.
@@ -150,9 +153,6 @@ func (w *worker) runDeploy(task *proto.AgentTask) error {
 
 // runDeployVHD writes the image into base.vhdx on the store of the PC.
 func (w *worker) runDeployVHD(task *proto.AgentTask) error {
-	if task.VHDSize == 0 {
-		return errors.New("сервер не прислал размер VHDX")
-	}
 	var vt vhdTarget
 	open := func() (target, error) {
 		var err error
@@ -160,7 +160,7 @@ func (w *worker) runDeployVHD(task *proto.AgentTask) error {
 		return vt, err
 	}
 	boot := func(info proto.DeployInfo) error {
-		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: task.VHDSize, Written: time.Now()}, task.Accounts)
+		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: vt.VHDSize(), Written: time.Now()}, task.Accounts)
 	}
 	return w.deployInto(task, "Развёртывание в VHDX", open, boot)
 }

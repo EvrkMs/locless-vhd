@@ -322,6 +322,8 @@ function formatSize(n) {
   return Math.max(1, Math.round(n / 2 ** 20)) + ' МБ';
 }
 
+const vhdText = size => size ? formatSize(size) : 'по месту на ПК';
+
 const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', deployvhd: 'Развёртывание в VHDX', format: 'Форматирование', prepare: 'Подготовка диска' };
 const stateText = { queued: 'Ждёт загрузки ПК', started: 'Загружается WinPE', running: 'Выполняется', done: 'Готово', failed: 'Ошибка', cancelled: 'Отменена' };
 const stuck = t => !t.finishedAt && t.stage === 'Ошибка'; // the agent waits on its error screen
@@ -738,9 +740,9 @@ function imageActions(image) {
   const older = active.filter(v => v !== current);
   const leaves = image.versions.filter(v => !image.versions.some(o => o.parent === v.number));
   const items = [{
-    text: `Размер VHDX: ${formatSize(image.vhdSize)}…`,
+    text: `Размер VHDX: ${vhdText(image.vhdSize)}…`,
     run: () => {
-      const answer = prompt('Размер виртуального диска в ГБ. Новый размер получат ПК при следующем развёртывании в VHDX.', Math.round(image.vhdSize / 2 ** 30));
+      const answer = prompt('Размер виртуального диска в ГБ, 0 — по месту на хранилище каждого ПК. Новый размер получат ПК при следующем развёртывании в VHDX.', Math.round(image.vhdSize / 2 ** 30));
       if (answer !== null) act('PUT', path + '/vhd', { GiB: Number(answer) });
     },
   }, null];
@@ -776,7 +778,7 @@ function imageRows(images) {
     const title = el('td', { textContent: image.name, title: image.path, className: image.missing || image.offline ? 'lost' : '' });
     if (image.missing) title.append(el('div', { className: 'sub lost', textContent: 'Файлы не найдены' }));
     if (image.offline) title.append(el('div', { className: 'sub lost', textContent: 'Папка недоступна' }));
-    title.append(el('div', { className: 'sub', textContent: 'VHDX ' + formatSize(image.vhdSize) }));
+    title.append(el('div', { className: 'sub', textContent: 'VHDX ' + vhdText(image.vhdSize) }));
     if (image.merging) title.append(el('div', { className: 'chip started', textContent: 'Идёт слияние' }));
     if (image.mergeError) title.append(el('div', { className: 'sub lost', textContent: 'Слияние не удалось: ' + image.mergeError }));
     const menu = button('Действия ▾', '', () => openMenu(menu, imageActions(image)));

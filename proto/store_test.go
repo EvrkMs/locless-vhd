@@ -75,8 +75,29 @@ func TestIsStoreLayout(t *testing.T) {
 
 func TestStoreNeed(t *testing.T) {
 	const gib = 1 << 30
-	if got := StoreNeed(64*gib, 16*gib); got != (2*64+16+4+1)*gib {
+	if got := StoreNeed(64*gib, 16*gib); got != (64+8+16+4+1)*gib {
 		t.Fatalf("StoreNeed: %d GiB", got/gib)
+	}
+	if got := StoreNeed(200*gib, 0); got != (200+20+4+1)*gib {
+		t.Fatalf("StoreNeed with a tenth: %d GiB", got/gib)
+	}
+}
+
+func TestAutoVHDSize(t *testing.T) {
+	const gib = 1 << 30
+	for _, store := range []uint64{20 * gib, 60 * gib, 222 * gib, 930 * gib, 1863*gib + 12345} {
+		size := AutoVHDSize(store, 16*gib)
+		fits := size == 0 || StoreNeed(size, 16*gib) <= store
+		if size%gib != 0 || !fits || StoreNeed(size+gib, 16*gib) <= store {
+			t.Errorf("store %d GiB: size %d GiB is not the largest that fits", store/gib, size/gib)
+		}
+	}
+	if AutoVHDSize(10*gib, 16*gib) != 0 {
+		t.Error("a store smaller than the reserve gave a size")
+	}
+	// The 240 GB disk of PC08: the store is about 222 GiB.
+	if got := AutoVHDSize(222*gib, 16*gib) / gib; got < 180 {
+		t.Errorf("PC08 would get %d GiB", got)
 	}
 }
 

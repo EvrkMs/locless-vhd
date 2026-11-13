@@ -654,6 +654,8 @@ type fakeVHD struct {
 	bootErr  error
 }
 
+func (v *fakeVHD) VHDSize() uint64 { return 100 << 30 }
+
 func (v *fakeVHD) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if v.name == "" {
 		return errors.New("boot before the name was written into the base")
@@ -694,7 +696,7 @@ func TestDeployVHDWritesTheBaseAndBoots(t *testing.T) {
 	if size != store.DefaultVHDSize {
 		t.Fatalf("size %d, want the default of the image", size)
 	}
-	if v.state == nil || v.state.Image != "win11" || v.state.Version != 1 || v.state.VHDSize != size {
+	if v.state == nil || v.state.Image != "win11" || v.state.Version != 1 || v.state.VHDSize != v.VHDSize() {
 		t.Fatalf("state: %+v", v.state)
 	}
 	if !bytes.Equal(v.blocks[7*testBlock], v1[7]) || !v.grown || v.name != "PC-12" {

@@ -43,7 +43,7 @@ var ErrImageInUse = errors.New("store: image has versions")
 // CreateImage adds an empty image that lives in the folder at path. The path stays
 // with the image: changing the image directory later only affects new images.
 func (s *Store) CreateImage(ctx context.Context, name, path string) error {
-	res, err := s.db.ExecContext(ctx, "INSERT INTO images(name, path, created_at) VALUES(?, ?, ?) ON CONFLICT(name) DO NOTHING", name, path, unix(time.Now()))
+	res, err := s.db.ExecContext(ctx, "INSERT INTO images(name, path, created_at, vhd_size) VALUES(?, ?, ?, 0) ON CONFLICT(name) DO NOTHING", name, path, unix(time.Now()))
 	if err != nil {
 		return err
 	}
@@ -60,9 +60,11 @@ func (s *Store) CreateImage(ctx context.Context, name, path string) error {
 // Limits of the virtual disk of an image. Below the minimum Windows does not fit;
 // the maximum is far above any disk of the club and well inside what VHDX allows.
 const (
-	MinVHDSize     uint64 = 16 << 30
-	MaxVHDSize     uint64 = 16 << 40
-	DefaultVHDSize uint64 = 64 << 30 // what migration 9 gives every image
+	MinVHDSize uint64 = 16 << 30
+	MaxVHDSize uint64 = 16 << 40
+	// DefaultVHDSize is 0: the agent sizes the virtual disk by the store of the
+	// PC, see proto.AutoVHDSize. Migration 10 moved images off the old 64 GiB.
+	DefaultVHDSize uint64 = 0
 )
 
 // ErrBadVHDSize means a virtual disk size outside MinVHDSize..MaxVHDSize.
@@ -78,10 +80,10 @@ func (s *Store) ImageVHDSize(ctx context.Context, name string) (uint64, error) {
 	return size, err
 }
 
-// SetImageVHDSize changes that size. Virtual disks already deployed keep theirs
+// SetImageVHDSize changes that size; 0 sizes it by the store of each PC. Virtual disks already deployed keep theirs
 // until the next deploy into VHDX.
 func (s *Store) SetImageVHDSize(ctx context.Context, name string, size uint64) error {
-	if size < MinVHDSize || size > MaxVHDSize {
+	if size != 0 && (size < MinVHDSize || size > MaxVHDSize) {
 		return ErrBadVHDSize
 	}
 	res, err := s.db.ExecContext(ctx, "UPDATE images SET vhd_size = ? WHERE name = ?", size, name)
@@ -331,7 +333,7 @@ func (s *Store) AddVersion(ctx context.Context, image string, v Version) error {
 	defer tx.Rollback()
 
 	now := unix(time.Now())
-	_, err = tx.ExecContext(ctx, "INSERT INTO images(name, path, created_at) VALUES(?, ?, ?) ON CONFLICT(name) DO NOTHING", image, path, now)
+	_, err = tx.ExecContext(ctx, "INSERT INTO images(name, path, created_at, vhd_size) VALUES(?, ?, ?, 0) ON CONFLICT(name) DO NOTHING", image, path, now)
 	if err != nil {
 		return err
 	}

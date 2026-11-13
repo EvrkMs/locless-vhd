@@ -112,6 +112,8 @@ var migrations = []string{`
 	ALTER TABLE tasks ADD COLUMN metrics TEXT NOT NULL DEFAULT '';
 `, `
 	ALTER TABLE images ADD COLUMN vhd_size INTEGER NOT NULL DEFAULT 68719476736;
+`, `
+	UPDATE images SET vhd_size = 0 WHERE vhd_size = 68719476736;
 `}
 
 // Setting keys.

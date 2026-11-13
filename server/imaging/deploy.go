@@ -113,12 +113,30 @@ func (m *Manager) DeployList(task int64, w io.Writer) error {
 	return err
 }
 
+// readAhead is how many blocks the disk may be ahead of the network in one
+// request: enough to keep both busy, little enough to cost a few megabytes.
+const readAhead = 8
+
+// storedBlock is a block read for sending, or the error that stopped reading.
+type storedBlock struct {
+	header  proto.BlockHeader
+	payload []byte
+	err     error
+}
+
 // DeployBlocks writes the stored blocks with the given numbers of the list, as
 // they are in the file: the agent checks them, so a bad block is caught there.
+// One goroutine reads the blocks while this one sends them, so the disk does
+// not stand still while a block goes over the network, nor the other way round.
 func (m *Manager) DeployBlocks(task int64, numbers []uint32, w io.Writer) error {
 	s, err := m.deploy(task)
 	if err != nil {
 		return err
+	}
+	for _, n := range numbers {
+		if int64(n) >= int64(len(s.entries)) {
+			return fmt.Errorf("imaging: no entry %d", n)
+		}
 	}
 	// Timed per block and noted once, like Put.
 	var reading, sending time.Duration
@@ -128,23 +146,43 @@ func (m *Manager) DeployBlocks(task int64, numbers []uint32, w io.Writer) error 
 		m.note(task, statSend, sending)
 		m.count(task, "отдано по сети", sent, true)
 	}()
-	for _, n := range numbers {
-		if int64(n) >= int64(len(s.entries)) {
-			return fmt.Errorf("imaging: no entry %d", n)
+
+	blocks := make(chan storedBlock, readAhead)
+	stop := make(chan struct{})
+	done := make(chan time.Duration, 1)
+	defer func() {
+		close(stop)
+		reading = <-done // the reader is gone before the request ends
+	}()
+	go func() {
+		var spent time.Duration
+		defer func() { close(blocks); done <- spent }()
+		for _, n := range numbers {
+			at := time.Now()
+			h, payload, err := s.chain.Stored(s.entries[n])
+			spent += time.Since(at)
+			select {
+			case blocks <- storedBlock{h, payload, err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	for b := range blocks {
+		if b.err != nil {
+			return b.err
 		}
 		at := time.Now()
-		h, payload, err := s.chain.Stored(s.entries[n])
-		reading += time.Since(at)
-		if err != nil {
-			return err
-		}
-		at = time.Now()
-		err = proto.WriteStored(w, h, payload)
+		err := proto.WriteStored(w, b.header, b.payload)
 		sending += time.Since(at)
 		if err != nil {
 			return err
 		}
-		sent += uint64(proto.BlockHeaderSize + len(payload))
+		sent += uint64(proto.BlockHeaderSize + len(b.payload))
 	}
 	return nil
 }

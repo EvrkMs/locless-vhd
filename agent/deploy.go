@@ -583,27 +583,53 @@ type deployBatch struct {
 	err     error
 }
 
-// fetch downloads the batches one request at a time.
+// fetchRequests is how many batches the agent asks for at once. With one, the
+// server read a batch, sent it and stood idle until the next request came: its
+// disk worked in bursts. Two keep it reading while the agent receives the other.
+const fetchRequests = 2
+
+// fetch downloads the batches, fetchRequests at a time. They arrive in any order:
+// every batch fills its own places on the disk.
 func (d *deployRun) fetch(ctx context.Context, batches [][]uint32, out chan<- deployBatch) {
 	defer close(out)
-	for _, numbers := range batches {
-		b := deployBatch{numbers: numbers}
-		fetched := d.w.rec.Time(workFetch)
-		b.err = recovery.Run(func() (err error) { // a panic here would end the whole agent
-			b.body, err = d.w.client.deployBlocks(ctx, d.task, numbers)
-			return err
+	todo := make(chan []uint32)
+	failed := make(chan struct{})
+	var once sync.Once
+	var wg sync.WaitGroup
+	for range fetchRequests {
+		wg.Go(func() {
+			for numbers := range todo {
+				b := deployBatch{numbers: numbers}
+				fetched := d.w.rec.Time(workFetch)
+				b.err = recovery.Run(func() (err error) { // a panic here would end the whole agent
+					b.body, err = d.w.client.deployBlocks(ctx, d.task, numbers)
+					return err
+				})
+				fetched()
+				d.w.rec.Bytes("загружено по сети", uint64(len(b.body)))
+				d.w.rec.Count("пачек", 1)
+				waited := d.w.rec.Time(workFetchWaits)
+				select {
+				case out <- b:
+					waited()
+				case <-ctx.Done():
+					return
+				}
+				if b.err != nil {
+					once.Do(func() { close(failed) })
+					return
+				}
+			}
 		})
-		fetched()
-		d.w.rec.Bytes("загружено по сети", uint64(len(b.body)))
-		d.w.rec.Count("пачек", 1)
-		waited := d.w.rec.Time(workFetchWaits)
+	}
+	defer wg.Wait()
+	defer close(todo)
+	for _, numbers := range batches {
 		select {
-		case out <- b:
-			waited()
-		case <-ctx.Done():
+		case todo <- numbers:
+		case <-failed:
 			return
-		}
-		if b.err != nil {
+		case <-ctx.Done():
 			return
 		}
 	}

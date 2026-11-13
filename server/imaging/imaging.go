@@ -348,7 +348,19 @@ func (m *Manager) Check(task int64, hashes []proto.Sum) ([]byte, error) {
 	return missing, nil
 }
 
-// Put stores a stream of records.
+// receiveAhead is how many records the network may be ahead of the file: a
+// few megabytes, enough that a slow write does not stop the receiving.
+const receiveAhead = 8
+
+// received is a record read from the network, or the error that ended reading.
+type received struct {
+	rec proto.PutRecord
+	err error
+}
+
+// Put stores a stream of records. One goroutine reads them from the network
+// while this one writes them into the file: before, the network stood still
+// while a record was written, and the writing was a quarter of a full clone.
 func (m *Manager) Put(task int64, r io.Reader) error {
 	s, err := m.session(task)
 	if err != nil {
@@ -363,27 +375,53 @@ func (m *Manager) Put(task int64, r io.Reader) error {
 		m.note(task, statWriteImage, writing)
 		m.count(task, "записано в файл образа", stored, true)
 	}()
-	for {
-		// The network is read without the lock, which is taken for one record at a
-		// time: the agent asks about the hashes of its next batch while this one is
-		// still coming, and must not wait for the whole of it.
+
+	records := make(chan received, receiveAhead)
+	stop := make(chan struct{})
+	done := make(chan time.Duration, 1)
+	defer func() {
+		// The body belongs to the request: the reader has to be gone before Put
+		// returns. After a failed write it finishes the record it is reading.
+		close(stop)
+		receiving = <-done
+	}()
+	go func() {
+		var spent time.Duration
+		defer func() { close(records); done <- spent }()
+		for {
+			// The network is read without the lock, which store takes for one record
+			// at a time: the agent asks about the hashes of its next batch while this
+			// one is still coming, and must not wait for the whole of it.
+			at := time.Now()
+			rec, err := proto.ReadPut(r)
+			spent += time.Since(at)
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			select {
+			case records <- received{rec, err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	for got := range records {
+		if got.err != nil {
+			return got.err
+		}
 		at := time.Now()
-		rec, err := proto.ReadPut(r)
-		receiving += time.Since(at)
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		at = time.Now()
-		n, err := s.store(rec)
+		n, err := s.store(got.rec)
 		writing += time.Since(at)
 		stored += n
 		if err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
 // store writes one record under the lock of the session and returns the bytes it

@@ -54,6 +54,103 @@ func (h *server) createImage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// scanResult is what the scan did with one folder of the image directory.
+type scanResult struct {
+	Image    string   `json:"image"`
+	Versions []string `json:"versions"` // files added as versions
+	Skipped  []string `json:"skipped"`  // files left out, with the reason
+	Note     string   `json:"note,omitempty"`
+}
+
+// scanImages looks through the folders of the image directory for version files
+// the server does not know, for example an image copied from another server. A
+// folder unknown to the server becomes a new image; an image without versions
+// gets the ones in its folder. Images with versions are left alone.
+func (h *server) scanImages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	dir, err := h.store.Setting(ctx, store.SettingImageDir)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if dir == "" {
+		writeError(w, http.StatusConflict, "Сначала укажите папку образов в настройках")
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeError(w, http.StatusConflict, "Папка образов недоступна: "+err.Error())
+		return
+	}
+	images, err := h.store.Images(ctx)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	known := map[string]store.Image{}
+	for _, img := range images {
+		known[strings.ToLower(img.Name)] = img
+	}
+	results := []scanResult{}
+	for _, e := range entries {
+		if !e.IsDir() || !proto.ValidImageName(e.Name()) {
+			continue
+		}
+		folder := filepath.Join(dir, e.Name())
+		res := scanResult{Image: e.Name(), Versions: []string{}, Skipped: []string{}}
+		img, isKnown := known[strings.ToLower(e.Name())]
+		if isKnown {
+			res.Image = img.Name
+			if len(img.Versions) > 0 {
+				continue // the server keeps its versions itself
+			}
+			if !samePath(img.Path, folder) {
+				continue // an image of that name lives elsewhere
+			}
+			if n, err := h.store.ActiveImageTasks(ctx, img.Name); err != nil || n > 0 {
+				res.Note = "образ используется задачей, пропущен"
+				results = append(results, res)
+				continue
+			}
+		}
+		found, err := imaging.ReadFolder(folder)
+		if err != nil {
+			res.Note = "папка не читается: " + err.Error()
+			results = append(results, res)
+			continue
+		}
+		res.Skipped = append(res.Skipped, found.Skipped...)
+		if len(found.Versions) == 0 {
+			if len(res.Skipped) > 0 {
+				res.Note = "цепочка не найдена"
+				results = append(results, res)
+			}
+			continue
+		}
+		if !isKnown {
+			if err := h.store.CreateImage(ctx, res.Image, folder); err != nil {
+				res.Note = "образ не создан: " + err.Error()
+				results = append(results, res)
+				continue
+			}
+		}
+		for _, v := range found.Versions {
+			if err := h.store.AddVersion(ctx, res.Image, v); err != nil {
+				res.Note = "версия " + v.File + " не добавлена: " + err.Error()
+				break
+			}
+			res.Versions = append(res.Versions, v.File)
+		}
+		h.log.Info("image found on disk", "image", res.Image, "versions", len(res.Versions), "skipped", len(res.Skipped))
+		results = append(results, res)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"found": results})
+}
+
+func samePath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
 // deleteImage removes an empty image. Versions are never deleted from here.
 func (h *server) deleteImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")

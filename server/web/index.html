@@ -200,7 +200,9 @@ form input { flex: 1 1 180px; }
     <form id="imageForm">
       <input id="newImage" placeholder="win11-club" aria-label="Имя образа" maxlength="64" required>
       <button type="submit">Создать образ</button>
+      <button type="button" id="scanImages" title="Найти в папке образов файлы v1.ldisk, v2.ldelta…, которых сервер не знает, например образ, скопированный с другого сервера">Найти образы в папке</button>
     </form>
+    <div id="scanResult" class="sub" style="padding:0 18px 14px" hidden></div>
   </section>
   </div>
 
@@ -908,6 +910,25 @@ $('scenarioForm').addEventListener('submit', async e => {
 });
 
 $('scenarioStop').addEventListener('click', () => act('DELETE', '/api/scenarios'));
+
+$('scanImages').addEventListener('click', async () => {
+  const box = $('scanResult');
+  try {
+    const res = await api('POST', '/api/images/scan');
+    showError('');
+    const lines = res.found.map(f => {
+      let line = f.image + ': ' + (f.versions.length ? 'добавлено ' + f.versions.join(', ') : 'версии не добавлены');
+      if (f.note) line += ' — ' + f.note;
+      if (f.skipped.length) line += '. Пропущено: ' + f.skipped.join('; ');
+      return el('div', { textContent: line });
+    });
+    box.replaceChildren(...(lines.length ? lines : [el('div', { textContent: 'Новых образов в папке нет' })]));
+    box.hidden = false;
+    await refresh();
+  } catch (err) {
+    showError(err.message);
+  }
+});
 
 $('imageForm').addEventListener('submit', async e => {
   e.preventDefault();

@@ -56,6 +56,7 @@ type Store interface {
 	DeleteVersion(context.Context, string, int) error
 	ActiveImageTasks(context.Context, string) (int, error)
 	ClearImageLinks(context.Context, string) error
+	AddVersion(context.Context, string, store.Version) error
 }
 
 // Images changes the versions of images, which takes more than the database.
@@ -134,6 +135,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("GET /api/settings", h.settings)
 	mux.HandleFunc("PUT /api/settings", h.saveSettings)
 	mux.HandleFunc("POST /api/images", h.createImage)
+	mux.HandleFunc("POST /api/images/scan", h.scanImages)
 	mux.HandleFunc("DELETE /api/images/{name}", h.deleteImage)
 	mux.HandleFunc("DELETE /api/images/{name}/versions/{number}", h.deleteVersion)
 	mux.HandleFunc("POST /api/images/{name}/versions/{number}/restore", h.restoreVersion)

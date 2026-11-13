@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"locless-vhd/proto"
 	"locless-vhd/server/imaging"
 	"locless-vhd/server/scenario"
 	"locless-vhd/server/store"
@@ -869,5 +871,73 @@ func TestScenarioOnlyWithDev(t *testing.T) {
 	}
 	if ok, _ := s.HasTask(ctx, net.HardwareAddr{2, 0, 0, 0, 0, 7}); ok {
 		t.Fatal("the task of a stopped run was left")
+	}
+}
+
+// writeDisk writes a small valid .ldisk, as a clone would have.
+func writeDisk(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer f.Close()
+	w, err := proto.NewWriter(f, proto.Header{Kind: proto.KindDisk, BlockSize: proto.DefaultBlockSize, ID: proto.NewID()}, nil)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.Add(3, 0, bytes.Repeat([]byte{7}, proto.DefaultBlockSize)); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	guid := "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+	m := proto.Manifest{Version: proto.ManifestVersion, DiskSize: 64 << 20, SectorSize: 512, DiskGUID: guid,
+		Partitions: []proto.Partition{{Number: 3, TypeGUID: guid, GUID: guid, Offset: 1 << 20, Size: 32 << 20,
+			Policy: proto.PolicyFill, Content: proto.ContentBlocks}}}
+	if _, err := w.Close(m); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestScanFindsCopiedImages: a copied folder becomes an image, an empty image gets
+// its v1, and an image the server already keeps versions of is not touched.
+func TestScanFindsCopiedImages(t *testing.T) {
+	h, s, dir, _ := imageEnv(t)
+	ctx := context.Background()
+	writeDisk(t, filepath.Join(dir, "copied", "v1.ldisk"))
+	if w := do(h, http.MethodPost, "/api/images", `{"name":"empty"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("create: %d", w.Code)
+	}
+	writeDisk(t, filepath.Join(dir, "empty", "v1.ldisk"))
+	os.MkdirAll(filepath.Join(dir, "junk"), 0o755)
+	os.WriteFile(filepath.Join(dir, "junk", "v2.ldelta"), []byte("x"), 0o644)
+
+	w := do(h, http.MethodPost, "/api/images/scan", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("scan: %d %s", w.Code, w.Body)
+	}
+	for _, name := range []string{"copied", "empty"} {
+		versions, err := s.AllVersions(ctx, name)
+		if err != nil || len(versions) != 1 || versions[0].File != "v1.ldisk" {
+			t.Fatalf("%s: %+v, %v", name, versions, err)
+		}
+	}
+	if path, _ := s.ImagePath(ctx, "copied"); path != filepath.Join(dir, "copied") {
+		t.Fatalf("path %q", path)
+	}
+	if !strings.Contains(w.Body.String(), "цепочка не найдена") {
+		t.Fatalf("junk not reported: %s", w.Body)
+	}
+	images, _ := s.Images(ctx)
+	if len(images) != 2 {
+		t.Fatalf("images: %+v", images)
+	}
+
+	// A second scan finds nothing new and adds nothing twice.
+	do(h, http.MethodPost, "/api/images/scan", "")
+	if versions, _ := s.AllVersions(ctx, "copied"); len(versions) != 1 {
+		t.Fatalf("second scan: %+v", versions)
 	}
 }

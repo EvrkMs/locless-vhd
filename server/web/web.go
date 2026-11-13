@@ -22,6 +22,7 @@ import (
 
 	"locless-vhd/server/scenario"
 	"locless-vhd/server/store"
+	"locless-vhd/server/winpe"
 )
 
 //go:embed index.html
@@ -82,6 +83,9 @@ type Config struct {
 	Addresses func() []string // IPv4 addresses of the machine clients could use
 	Bind      string          // the client address fixed at start with -bind, if any
 	Scenarios Scenarios       // the measuring scenario of -dev; nil without it
+	// BuildWinPE starts building boot.wim from the WinRE of the server again,
+	// after a failure; nil turns the request off.
+	BuildWinPE func()
 }
 
 // Scenarios runs the measuring scenario: deploy, delta clone, whole clone.
@@ -93,10 +97,11 @@ type Scenarios interface {
 
 // Status says whether PCs of the club are being served.
 type Status struct {
-	Addr         string    `json:"addr"`                   // where clients reach the server
-	Waiting      string    `json:"waiting,omitempty"`      // what is missing before the services start
-	Services     []Service `json:"services"`               // the running client services
-	MissingFiles []string  `json:"missingFiles,omitempty"` // boot files not in the served folder
+	Addr         string       `json:"addr"`                   // where clients reach the server
+	Waiting      string       `json:"waiting,omitempty"`      // what is missing before the services start
+	Services     []Service    `json:"services"`               // the running client services
+	MissingFiles []string     `json:"missingFiles,omitempty"` // boot files not in the served folder
+	WinPE        winpe.Status `json:"winpe"`                  // the server building boot.wim from its WinRE
 }
 
 // Service is one client service.
@@ -134,6 +139,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/task", h.createTask)
 	mux.HandleFunc("DELETE /api/hosts/{id}/task", h.cancelTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", h.cancelOneTask)
+	mux.HandleFunc("POST /api/winpe", h.buildWinPE)
 	mux.HandleFunc("DELETE /api/discovered/{mac}", h.forgetDiscovered)
 	mux.HandleFunc("GET /api/settings", h.settings)
 	mux.HandleFunc("PUT /api/settings", h.saveSettings)
@@ -327,6 +333,17 @@ func (h *server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	if id, ok := hostID(w, r); ok {
 		h.done(w, h.store.CancelTask(r.Context(), id))
 	}
+}
+
+// buildWinPE starts the build of boot.wim again; the panel sees how it goes in
+// the state.
+func (h *server) buildWinPE(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.BuildWinPE == nil {
+		writeError(w, http.StatusNotFound, "Сборка WinPE недоступна")
+		return
+	}
+	h.cfg.BuildWinPE()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // cancelOneTask cancels one task of a queue; the PC goes on with the next.

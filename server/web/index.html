@@ -887,10 +887,16 @@ function showServer(srv) {
   for (const svc of srv.services) {
     if (svc.error) problems.push(svc.name + ' не работает: ' + svc.error + '. Сервер пробует снова сам.');
   }
-  if (srv.missingFiles && srv.missingFiles.length) {
-    problems.push('В папке EFI нет файлов: ' + srv.missingFiles.join(', ') + '.');
+  // boot.wim the server makes itself from its WinRE; the rest has to be put there.
+  const pe = srv.winpe || {};
+  const missing = (srv.missingFiles || []).filter(f => !(f === 'WinPE/boot.wim' && (pe.building || pe.error)));
+  if (missing.length) problems.push('В папке EFI нет файлов: ' + missing.join(', ') + '.');
+  if (pe.building) problems.push('Собираю WinPE/boot.wim из WinRE этого сервера, это около минуты. Пока он не готов, ПК с задачей грузятся с диска.');
+  if (pe.error) {
+    problems.push(el('span', {}, 'WinPE/boot.wim не собран: ' + pe.error + '. ',
+      button('Собрать снова', '', () => act('POST', '/api/winpe'))));
   }
-  $('setup').replaceChildren(...problems.map(p => el('div', { textContent: p })));
+  $('setup').replaceChildren(...problems.map(p => el('div', {}, p)));
   $('setup').hidden = !problems.length;
   const lines = srv.waiting ? [el('div', { textContent: 'не запущены' })] : srv.services.map(svc =>
     el('div', { textContent: svc.name + ' — ' + (svc.running ? 'работает, ' + srv.addr : svc.error ? 'ошибка' : 'запускается') }));

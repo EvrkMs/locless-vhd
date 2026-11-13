@@ -218,8 +218,22 @@ bin/fogs-server.exe
 | `ipxe-shim.efi` | уже в [EFI/](EFI). Это `x86_64-sb/shimx64.efi` из `ipxeboot.tar.gz` [релиза iPXE](https://github.com/ipxe/ipxe/releases), имя менять нельзя: shim ищет iPXE по своему имени |
 | `ipxe.efi` | уже в [EFI/](EFI). Это `x86_64-sb/ipxe.efi` из того же архива: с файлом из другой сборки shim потребует MOK |
 | `wimboot` | уже в [EFI/](EFI). Это файл из [релизов wimboot](https://github.com/ipxe/wimboot/releases/latest) |
-| `WinPE/boot.wim` | `sources\boot.wim` с ISO Windows, без изменений |
+| `WinPE/boot.wim` | сервер собирает сам, см. ниже |
 | `agent/partclone.exe` | `go build -o EFI/agent/partclone.exe ./agent` |
+
+**WinPE.** Если `WinPE\boot.wim` нет, сервер при запуске собирает его сам из среды
+восстановления (WinRE) своей Windows скриптом [server/winpe/build.ps1](server/winpe/build.ps1).
+Это около минуты, ход сборки виден в логе и в панели. Скрипт копирует `Winre.wim` с раздела
+восстановления, ничего не меняя в системе, удаляет старые версии компонентов, 32-битную
+подсистему, речь и саму оболочку восстановления. Потом экспортирует образ со сжатием LZX:
+iPXE скачивает файл целиком, поэтому размер файла и есть время загрузки. На Windows Server
+2025 (26100) получилось 738 → 505 МБ, `boot.wim` с ISO весит 625 МБ.
+Нужны права администратора: без них панель покажет ошибку и кнопку «Собрать снова».
+Свой файл сервер не трогает. Собрать из другого источника, например `boot.wim` с ISO:
+
+```
+powershell -ExecutionPolicy Bypass -File server\winpe\build.ps1 -Source D:\sources\boot.wim -Out EFI\WinPE\boot.wim -Work data\winpe
+```
 
 Эти файлы, как и всё в `EFI\`, доступны по HTTP без авторизации в `/files/`, поэтому
 образы дисков там не храните. Когда агент завершается, WinPE перезагружает ПК.

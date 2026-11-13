@@ -33,6 +33,7 @@ import (
 	"locless-vhd/server/store"
 	"locless-vhd/server/tftp"
 	"locless-vhd/server/web"
+	"locless-vhd/server/winpe"
 )
 
 // Folders inside the root.
@@ -266,6 +267,21 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	for _, name := range missing() {
 		log.Warn(`boot file is missing from EFI\`, "file", name)
 	}
+	// Without boot.wim the server makes one from its own WinRE.
+	pe := &winpe.Builder{
+		Out:  filepath.Join(efiPath, filepath.FromSlash(boot.BootWimPath)),
+		Work: filepath.Join(cfg.root, dataDir, "winpe"),
+		Log:  log.With("service", "winpe"),
+	}
+	// buildWinPE runs once at the start and again from the panel. It does nothing
+	// while the file exists or a build runs.
+	buildWinPE := func() {
+		go func() {
+			if err := recovery.Run(func() error { pe.Run(ctx); return nil }); err != nil {
+				log.Error("WinPE build crashed", "err", err)
+			}
+		}()
+	}
 
 	if err := checkOldDatabase(cfg.root, cfg.db); err != nil {
 		return err
@@ -392,6 +408,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		Status: func() web.Status {
 			st := clients.Status()
 			st.MissingFiles = missing()
+			st.WinPE = pe.Status()
 			return st
 		},
 		Changed: clients.Changed,
@@ -402,8 +419,9 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 			}
 			return list
 		},
-		Bind:      cfg.bind,
-		Scenarios: scenarios(runner),
+		Bind:       cfg.bind,
+		Scenarios:  scenarios(runner),
+		BuildWinPE: buildWinPE,
 	})
 	panelService := httpService(cfg.admin, func() *http.Server {
 		return &http.Server{Handler: recovery.Handler(log.With("service", "panel"), panel), ReadHeaderTimeout: 10 * time.Second}
@@ -416,6 +434,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	wg.Go(func() {
 		recovery.Keep(ctx, log, "imaging", func() error { images.Run(ctx); return nil })
 	})
+	buildWinPE()
 	wg.Go(func() {
 		recovery.Keep(ctx, log, "clients", func() error { clients.run(ctx); return nil })
 	})

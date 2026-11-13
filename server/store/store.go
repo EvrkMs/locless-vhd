@@ -170,8 +170,8 @@ type Host struct {
 	Image    string     `json:"image"`  // the image this PC belongs to
 	Shrunk   bool       `json:"shrunk"` // its volume may still wait to get its size back
 	LastSeen *time.Time `json:"lastSeen"`
-	Task     *Task      `json:"task"`     // the one the PC does now or next
-	Queue    []Task     `json:"queue"`    // the ones after it, in order
+	Task     *Task      `json:"task"`  // the one the PC does now or next
+	Queue    []Task     `json:"queue"` // the ones after it, in order
 	LastTask *Task      `json:"lastTask"`
 }
 

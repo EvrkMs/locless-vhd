@@ -229,6 +229,11 @@ form input { flex: 1 1 180px; }
       <p id="exitNote">Если компьютер после сети выпадает в настройки UEFI, попробуйте другой способ.</p>
     </div>
     <div class="field">
+      <label for="readCache">Кеш чтения образов, ГБ</label>
+      <input id="readCache" type="number" min="0" max="256" step="1" style="max-width: 120px">
+      <p id="readCacheNote">Сколько памяти сервера все развёртывания вместе могут занять блоками, прочитанными заранее. Сервер читает образ длинными кусками впереди запросов ПК, начиная ещё во время отсчёта, и отдаёт блоки из памяти. 0 — читать только то, что ПК попросил. Действует на развёртывания, начатые после сохранения.</p>
+    </div>
+    <div class="field">
       <label for="confirmSeconds">Отсчёт перед стиранием диска, секунд</label>
       <input id="confirmSeconds" type="number" min="0" max="300" step="1" style="max-width: 120px">
       <p id="confirmNote">Столько секунд агент показывает предупреждение перед развёртыванием, форматированием и подготовкой диска, Esc на ПК отменяет. 0 — без отсчёта. Действует на задачи, которые агент получит после сохранения.</p>
@@ -885,6 +890,7 @@ async function loadSettings() {
     $('imageDir').value = s.imageDir;
     $('exitMode').value = s.exitMode;
     $('confirmSeconds').value = s.confirmSeconds;
+    $('readCache').value = s.readCacheGiB;
     $('rootDir').textContent = s.root;
     $('playerUser').value = s.playerUser;
     $('adminPassword').placeholder = s.adminPasswordSet ? 'задан, введите новый, чтобы сменить' : 'не задан';
@@ -914,6 +920,18 @@ $('clientAddr').addEventListener('change', async e => {
     $('clientAddrNote').textContent = 'Сохранено';
     $('clientAddrNote').className = 'saved';
     refresh();
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+$('readCache').addEventListener('change', async e => {
+  try {
+    const s = await api('PUT', '/api/settings', { readCacheGiB: Number(e.target.value) });
+    e.target.value = s.readCacheGiB;
+    showError('');
+    $('readCacheNote').textContent = s.readCacheGiB === '0' ? 'Сохранено: кеш выключен' : 'Сохранено';
+    $('readCacheNote').className = 'saved';
   } catch (err) {
     showError(err.message);
   }

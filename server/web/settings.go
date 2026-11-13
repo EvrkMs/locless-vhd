@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"locless-vhd/proto"
+	"locless-vhd/server/imaging"
 	"locless-vhd/server/store"
 )
 
@@ -43,6 +44,14 @@ func (h *server) settings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	cache, err := h.store.Setting(r.Context(), store.SettingReadCache)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if cache == "" {
+		cache = "0"
+	}
 	confirm, err := h.store.Setting(r.Context(), store.SettingConfirmSeconds)
 	if err != nil {
 		h.fail(w, err)
@@ -52,7 +61,7 @@ func (h *server) settings(w http.ResponseWriter, r *http.Request) {
 		confirm = strconv.Itoa(defaultConfirmSeconds)
 	}
 	// The password itself never leaves the server through the panel: only whether it is set.
-	writeJSON(w, http.StatusOK, map[string]any{"confirmSeconds": confirm, "imageDir": dir, "exitMode": mode, "root": h.root,
+	writeJSON(w, http.StatusOK, map[string]any{"confirmSeconds": confirm, "readCacheGiB": cache, "imageDir": dir, "exitMode": mode, "root": h.root,
 		"clientAddr": addr, "addresses": h.addresses(), "bind": h.cfg.Bind,
 		"playerUser": player, "adminPasswordSet": password != ""})
 }
@@ -74,7 +83,7 @@ func (h *server) addresses() []string {
 func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		ImageDir, ExitMode, ClientAddr, PlayerUser, AdminPassword *string
-		ConfirmSeconds                                            *int
+		ConfirmSeconds, ReadCacheGiB                              *int
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -118,6 +127,18 @@ func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("wipe warning changed", "seconds", n)
+	}
+	if in.ReadCacheGiB != nil {
+		n := *in.ReadCacheGiB
+		if n < 0 || n > imaging.MaxReadCacheGiB {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Кеш чтения от 0 до %d ГБ", imaging.MaxReadCacheGiB))
+			return
+		}
+		if err := h.store.SetSetting(r.Context(), store.SettingReadCache, strconv.Itoa(n)); err != nil {
+			h.fail(w, err)
+			return
+		}
+		h.log.Info("read cache changed", "gib", n)
 	}
 	if in.PlayerUser != nil {
 		name := strings.TrimSpace(*in.PlayerUser)

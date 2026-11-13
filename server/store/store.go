@@ -133,6 +133,9 @@ const (
 	// SettingConfirmSeconds is how long the agent warns before it wipes a disk;
 	// empty means its default.
 	SettingConfirmSeconds = "confirm_seconds"
+	// SettingReadCache is the memory in GiB deploys may fill with blocks read
+	// ahead; empty or 0 reads only what is asked for.
+	SettingReadCache = "read_cache_gib"
 )
 
 // Store is an open database.

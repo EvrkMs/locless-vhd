@@ -75,12 +75,14 @@ type Manager struct {
 
 	statsMu sync.Mutex // apart from mu: a Put holds only its session, and notes as it goes
 	stats   map[int64]*taskStats
+
+	cache *readCache // blocks of deploys read ahead, see SettingReadCache
 }
 
 // New returns a manager.
 func New(s Store, log *slog.Logger) *Manager {
 	return &Manager{store: s, log: log, sessions: map[int64]*session{}, deploys: map[int64]*deploySession{}, claims: map[string]int64{},
-		merging: map[string]bool{}, mergeErrors: map[string]string{}, stats: map[int64]*taskStats{}}
+		merging: map[string]bool{}, mergeErrors: map[string]string{}, stats: map[int64]*taskStats{}, cache: newReadCache()}
 }
 
 // session is one file being received. Its lock orders the writes of one clone.

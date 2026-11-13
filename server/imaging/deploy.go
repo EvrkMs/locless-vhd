@@ -23,9 +23,13 @@ type deploySession struct {
 	chain   *proto.Chain
 	entries []proto.Entry
 	active  atomic.Int64
+	ahead   *prefetcher // nil when the read cache is off
 }
 
 func (s *deploySession) close() {
+	if s.ahead != nil {
+		s.ahead.stop()
+	}
 	for _, f := range s.files {
 		f.Close()
 	}
@@ -68,6 +72,7 @@ func (m *Manager) StartDeploy(ctx context.Context, task int64, image string) (pr
 	index := s.chain.Index()
 	s.entries = index.Entries
 	s.active.Store(time.Now().Unix())
+	m.cache.setLimit(m.readCacheLimit(ctx))
 
 	m.mu.Lock()
 	if m.merging[image] {
@@ -80,6 +85,10 @@ func (m *Manager) StartDeploy(ctx context.Context, task int64, image string) (pr
 	}
 	m.deploys[task] = s
 	m.mu.Unlock()
+	// Reading ahead starts now: the agent still counts down and writes the table.
+	if m.cache.enabled() {
+		s.ahead = newPrefetcher(m.cache, s.chain, s.entries)
+	}
 
 	last := versions[len(versions)-1]
 	m.log.Info("deploy started", "task", task, "image", image, "version", last.Number, "blocks", len(s.entries))
@@ -150,6 +159,11 @@ func (m *Manager) DeployBlocks(task int64, numbers []uint32, w io.Writer) error 
 		m.count(task, "отдано по сети", sent, true)
 	}()
 
+	if s.ahead != nil {
+		s.ahead.asked(numbers)
+	}
+	var fromCache uint64
+	defer func() { m.count(task, "отдано из кеша чтения", fromCache, true) }()
 	blocks := make(chan storedBlock, readAhead)
 	stop := make(chan struct{})
 	done := make(chan time.Duration, 1)
@@ -164,8 +178,23 @@ func (m *Manager) DeployBlocks(task int64, numbers []uint32, w io.Writer) error 
 		// with one request of up to readRun instead of one each.
 		look := make([]proto.Entry, 0, 64)
 		for i := 0; i < len(numbers); {
+			if s.ahead != nil {
+				if b, ok := s.ahead.take(numbers[i]); ok {
+					fromCache += uint64(proto.BlockHeaderSize + len(b.Payload))
+					select {
+					case blocks <- storedBlock{header: b.Header, payload: b.Payload}:
+					case <-stop:
+						return
+					}
+					i++
+					continue
+				}
+			}
 			look = look[:0]
 			for _, n := range numbers[i:min(len(numbers), i+cap(look))] {
+				if len(look) > 0 && s.ahead != nil && s.ahead.has(n) {
+					break // the rest of the run is ready in memory
+				}
 				look = append(look, s.entries[n])
 			}
 			at := time.Now()

@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -41,8 +42,9 @@ type Store interface {
 	RenameHost(context.Context, int64, string) error
 	DeleteHost(context.Context, int64) error
 	ForgetDiscovered(context.Context, net.HardwareAddr) error
-	CreateTask(context.Context, int64, string, string) (store.Task, error)
+	QueueTask(context.Context, int64, string, string) (store.Task, error)
 	CancelTask(context.Context, int64) error
+	CancelTaskID(context.Context, int64) error
 	Setting(context.Context, string) (string, error)
 	SetSetting(context.Context, string, string) error
 	Images(context.Context) ([]store.Image, error)
@@ -131,6 +133,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("DELETE /api/hosts/{id}", h.deleteHost)
 	mux.HandleFunc("POST /api/hosts/{id}/task", h.createTask)
 	mux.HandleFunc("DELETE /api/hosts/{id}/task", h.cancelTask)
+	mux.HandleFunc("DELETE /api/tasks/{id}", h.cancelOneTask)
 	mux.HandleFunc("DELETE /api/discovered/{mac}", h.forgetDiscovered)
 	mux.HandleFunc("GET /api/settings", h.settings)
 	mux.HandleFunc("PUT /api/settings", h.saveSettings)
@@ -307,9 +310,9 @@ func (h *server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Неизвестный тип задачи")
 		return
 	}
-	task, err := h.store.CreateTask(r.Context(), id, in.Kind, image)
-	if errors.Is(err, store.ErrTaskExists) {
-		writeError(w, http.StatusConflict, "У компьютера уже есть задача")
+	task, err := h.store.QueueTask(r.Context(), id, in.Kind, image)
+	if errors.Is(err, store.ErrQueueFull) {
+		writeError(w, http.StatusConflict, fmt.Sprintf("Очередь заполнена: не больше %d задач", store.MaxQueue))
 		return
 	}
 	if err != nil {
@@ -324,6 +327,16 @@ func (h *server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	if id, ok := hostID(w, r); ok {
 		h.done(w, h.store.CancelTask(r.Context(), id))
 	}
+}
+
+// cancelOneTask cancels one task of a queue; the PC goes on with the next.
+func (h *server) cancelOneTask(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Неверная задача")
+		return
+	}
+	h.done(w, h.store.CancelTaskID(r.Context(), id))
 }
 
 func (h *server) forgetDiscovered(w http.ResponseWriter, r *http.Request) {

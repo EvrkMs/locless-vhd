@@ -311,6 +311,101 @@ func TestFailedTaskKeepsItsProgress(t *testing.T) {
 	}
 }
 
+// TestQueueGoesInOrder: the PC does its tasks one after another, and the panel
+// sees the first as the task and the rest as the queue.
+func TestQueueGoesInOrder(t *testing.T) {
+	s := open(t)
+	h := addHost(t, s, macA, "PC-01")
+	other := addHost(t, s, macB, "PC-02")
+	first, _ := s.QueueTask(ctx, h.ID, TaskPrepare, "")
+	second, _ := s.QueueTask(ctx, h.ID, TaskDeployVHD, "win11")
+	third, _ := s.QueueTask(ctx, h.ID, TaskAgent, "")
+	if _, err := s.QueueTask(ctx, other.ID, TaskAgent, ""); err != nil {
+		t.Fatalf("QueueTask: %v", err)
+	}
+	if _, err := s.CreateTask(ctx, h.ID, TaskAgent, ""); !errors.Is(err, ErrTaskExists) {
+		t.Fatalf("CreateTask over a queue: %v", err)
+	}
+
+	hosts, _ := s.Hosts(ctx)
+	if hosts[0].Task == nil || hosts[0].Task.ID != first.ID || len(hosts[0].Queue) != 2 ||
+		hosts[0].Queue[0].ID != second.ID || hosts[0].Queue[1].ID != third.ID || len(hosts[1].Queue) != 0 {
+		t.Fatalf("hosts: %+v", hosts)
+	}
+	if err := s.MarkStarted(ctx, macA); err != nil {
+		t.Fatalf("MarkStarted: %v", err)
+	}
+	hosts, _ = s.Hosts(ctx)
+	if hosts[0].Task.Status != StatusStarted || hosts[0].Queue[0].Status != StatusQueued {
+		t.Fatalf("started: %+v / %+v", hosts[0].Task, hosts[0].Queue)
+	}
+
+	if err := s.FinishTask(ctx, macA, first.ID, true, ""); err != nil {
+		t.Fatalf("FinishTask: %v", err)
+	}
+	if got, _ := s.ActiveTask(ctx, macA); got == nil || got.ID != second.ID || got.Image != "win11" {
+		t.Fatalf("next: %+v", got)
+	}
+	// Cancelling the task of the moment moves the PC on to the next.
+	if err := s.CancelTaskID(ctx, second.ID); err != nil {
+		t.Fatalf("CancelTaskID: %v", err)
+	}
+	if err := s.CancelTaskID(ctx, second.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel twice: %v", err)
+	}
+	if got, _ := s.ActiveTask(ctx, macA); got == nil || got.ID != third.ID {
+		t.Fatalf("after cancel: %+v", got)
+	}
+}
+
+// TestFailureCancelsTheQueue: what comes after a failed task does not run.
+func TestFailureCancelsTheQueue(t *testing.T) {
+	s := open(t)
+	h := addHost(t, s, macA, "PC-01")
+	other := addHost(t, s, macB, "PC-02")
+	first, _ := s.QueueTask(ctx, h.ID, TaskPrepare, "")
+	s.QueueTask(ctx, h.ID, TaskDeployVHD, "win11")
+	s.QueueTask(ctx, h.ID, TaskAgent, "")
+	s.QueueTask(ctx, other.ID, TaskAgent, "")
+
+	if err := s.FinishTask(ctx, macA, first.ID, false, "нет места"); err != nil {
+		t.Fatalf("FinishTask: %v", err)
+	}
+	if ok, _ := s.HasTask(ctx, macA); ok {
+		t.Fatal("the queue goes on after a failure")
+	}
+	if ok, _ := s.HasTask(ctx, macB); !ok {
+		t.Fatal("the failure cancelled the task of another PC")
+	}
+	hosts, _ := s.Hosts(ctx)
+	if last := hosts[0].LastTask; last == nil || last.ID != first.ID || last.Status != StatusFailed {
+		t.Fatalf("last: %+v", last)
+	}
+	tasks, _ := s.RecentTasks(ctx, 10)
+	cancelled := 0
+	for _, tk := range tasks {
+		if tk.Status == StatusCancelled && tk.Message == QueueCancelled {
+			cancelled++
+		}
+	}
+	if cancelled != 2 {
+		t.Fatalf("cancelled %d: %+v", cancelled, tasks)
+	}
+}
+
+func TestQueueIsBounded(t *testing.T) {
+	s := open(t)
+	h := addHost(t, s, macA, "PC-01")
+	for i := range MaxQueue {
+		if _, err := s.QueueTask(ctx, h.ID, TaskAgent, ""); err != nil {
+			t.Fatalf("task %d: %v", i, err)
+		}
+	}
+	if _, err := s.QueueTask(ctx, h.ID, TaskAgent, ""); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("over the bound: %v", err)
+	}
+}
+
 func TestCancelledTaskIsNotAResult(t *testing.T) {
 	s := open(t)
 	h := addHost(t, s, macA, "PC-01")

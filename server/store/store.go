@@ -20,6 +20,7 @@ var (
 	ErrNotFound   = errors.New("store: not found")
 	ErrExists     = errors.New("store: host already exists")
 	ErrTaskExists = errors.New("store: host already has a task")
+	ErrQueueFull  = errors.New("store: the queue of the host is full")
 )
 
 // Task kinds.
@@ -114,6 +115,10 @@ var migrations = []string{`
 	ALTER TABLE images ADD COLUMN vhd_size INTEGER NOT NULL DEFAULT 68719476736;
 `, `
 	UPDATE images SET vhd_size = 0 WHERE vhd_size = 68719476736;
+`, `
+	-- A PC has a queue of tasks now, see QueueTask.
+	DROP INDEX one_active_task;
+	CREATE INDEX open_tasks ON tasks(host_id, id) WHERE finished_at IS NULL;
 `}
 
 // Setting keys.
@@ -165,7 +170,8 @@ type Host struct {
 	Image    string     `json:"image"`  // the image this PC belongs to
 	Shrunk   bool       `json:"shrunk"` // its volume may still wait to get its size back
 	LastSeen *time.Time `json:"lastSeen"`
-	Task     *Task      `json:"task"`
+	Task     *Task      `json:"task"`     // the one the PC does now or next
+	Queue    []Task     `json:"queue"`    // the ones after it, in order
 	LastTask *Task      `json:"lastTask"`
 }
 
@@ -347,7 +353,7 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 		SELECT h.id, h.mac, h.name, COALESCE(i.name, ''), h.saved_table IS NOT NULL, h.last_seen, t.id, t.kind, t.image, t.status, t.created_at, t.percent, t.stage, t.message
 		FROM hosts h
 		LEFT JOIN images i ON i.id = h.image_id
-		LEFT JOIN tasks t ON t.host_id = h.id AND t.finished_at IS NULL
+		LEFT JOIN tasks t ON t.id = (SELECT id FROM tasks WHERE host_id = h.id AND finished_at IS NULL ORDER BY id LIMIT 1)
 		ORDER BY h.name COLLATE NOCASE, h.id`)
 	if err != nil {
 		return nil, err
@@ -384,10 +390,45 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	queues, err := s.queues(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for i := range hosts {
 		hosts[i].LastTask = last[hosts[i].ID]
+		hosts[i].Queue = queues[hosts[i].ID]
+		if hosts[i].Queue == nil {
+			hosts[i].Queue = []Task{}
+		}
 	}
 	return hosts, nil
+}
+
+// queues returns the unfinished tasks of every host after its first, in order.
+func (s *Store) queues(ctx context.Context) (map[int64][]Task, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT host_id, id, kind, image, status, created_at FROM tasks
+		WHERE finished_at IS NULL ORDER BY host_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]Task{}
+	seen := map[int64]bool{}
+	for rows.Next() {
+		var host, created int64
+		var t Task
+		if err := rows.Scan(&host, &t.ID, &t.Kind, &t.Image, &t.Status, &created); err != nil {
+			return nil, err
+		}
+		if !seen[host] {
+			seen[host] = true // the first is Host.Task
+			continue
+		}
+		t.CreatedAt = fromUnix(created)
+		out[host] = append(out[host], t)
+	}
+	return out, rows.Err()
 }
 
 // HostTask is a task with the PC it belongs to.
@@ -427,7 +468,7 @@ func (s *Store) RecentTasks(ctx context.Context, limit int) ([]HostTask, error) 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.kind, t.image, t.status, t.created_at, t.finished_at, t.percent, t.stage, t.message, h.id, h.name, t.metrics != ''
 		FROM tasks t JOIN hosts h ON h.id = t.host_id
-		ORDER BY t.finished_at IS NOT NULL, t.id DESC LIMIT ?`, limit)
+		ORDER BY t.finished_at IS NOT NULL, CASE WHEN t.finished_at IS NULL THEN t.id END, t.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -498,24 +539,42 @@ func (s *Store) DiscoveredPCs(ctx context.Context) ([]Discovered, error) {
 
 // CreateTask queues a task for a host. image is the target of a clone, otherwise empty.
 func (s *Store) CreateTask(ctx context.Context, hostID int64, kind, image string) (Task, error) {
+	return s.addTask(ctx, hostID, kind, image, 1)
+}
+
+// MaxQueue is how many unfinished tasks a host may have, the running one included.
+const MaxQueue = 10
+
+// QueueTask adds a task after those the host already has. The PC does them one
+// after another, booting from the network for each; see FinishTask for a failure.
+func (s *Store) QueueTask(ctx context.Context, hostID int64, kind, image string) (Task, error) {
+	return s.addTask(ctx, hostID, kind, image, MaxQueue)
+}
+
+// addTask adds a task if the host has fewer than limit unfinished ones.
+func (s *Store) addTask(ctx context.Context, hostID int64, kind, image string, limit int) (Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, err
 	}
 	defer tx.Rollback()
 
-	var hostExists, taskExists bool
+	var hostExists bool
+	var unfinished int
 	err = tx.QueryRowContext(ctx, `SELECT
 		EXISTS(SELECT 1 FROM hosts WHERE id = ?1),
-		EXISTS(SELECT 1 FROM tasks WHERE host_id = ?1 AND finished_at IS NULL)`, hostID).Scan(&hostExists, &taskExists)
+		(SELECT COUNT(*) FROM tasks WHERE host_id = ?1 AND finished_at IS NULL)`, hostID).Scan(&hostExists, &unfinished)
 	if err != nil {
 		return Task{}, err
 	}
 	if !hostExists {
 		return Task{}, ErrNotFound
 	}
-	if taskExists {
-		return Task{}, ErrTaskExists
+	if unfinished >= limit {
+		if limit == 1 {
+			return Task{}, ErrTaskExists
+		}
+		return Task{}, ErrQueueFull
 	}
 	now := time.Now()
 	res, err := tx.ExecContext(ctx, "INSERT INTO tasks(host_id, kind, image, status, created_at) VALUES(?, ?, ?, ?, ?)", hostID, kind, image, StatusQueued, unix(now))
@@ -532,7 +591,15 @@ func (s *Store) CreateTask(ctx context.Context, hostID int64, kind, image string
 	return Task{ID: id, Kind: kind, Image: image, Status: StatusQueued, CreatedAt: fromUnix(unix(now))}, nil
 }
 
-// CancelTask ends the active task of a host, so it boots from disk again.
+// CancelTaskID ends one unfinished task. If it was the one running, the agent
+// sees it gone and the PC goes on with the next in its queue.
+func (s *Store) CancelTaskID(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE tasks SET status = ?, finished_at = ? WHERE id = ? AND finished_at IS NULL",
+		StatusCancelled, unix(time.Now()), id)
+	return affected(res, err)
+}
+
+// CancelTask ends all unfinished tasks of a host, so it boots from disk again.
 func (s *Store) CancelTask(ctx context.Context, hostID int64) error {
 	res, err := s.db.ExecContext(ctx, "UPDATE tasks SET status = ?, finished_at = ? WHERE host_id = ? AND finished_at IS NULL",
 		StatusCancelled, unix(time.Now()), hostID)
@@ -592,7 +659,7 @@ func (s *Store) ActiveTask(ctx context.Context, mac net.HardwareAddr) (*Task, er
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.id, t.kind, t.image, t.status, t.created_at
 		FROM tasks t JOIN hosts h ON h.id = t.host_id
-		WHERE h.mac = ? AND t.finished_at IS NULL`, mac.String()).Scan(&t.ID, &t.Kind, &t.Image, &t.Status, &created)
+		WHERE h.mac = ? AND t.finished_at IS NULL ORDER BY t.id LIMIT 1`, mac.String()).Scan(&t.ID, &t.Kind, &t.Image, &t.Status, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -613,17 +680,40 @@ func (s *Store) ReportProgress(ctx context.Context, mac net.HardwareAddr, id int
 	return affected(res, err)
 }
 
-// FinishTask ends a task with the agent's result, so the PC boots from disk again.
+// QueueCancelled is the message of the tasks a failure cancelled.
+const QueueCancelled = "отменена: предыдущая задача завершилась ошибкой"
+
+// FinishTask ends a task with the agent's result. The PC goes on with the next
+// task of its queue, or boots from disk again. A failure cancels the rest of the
+// queue: a deploy after a failed prepare would only fail too, or worse.
 func (s *Store) FinishTask(ctx context.Context, mac net.HardwareAddr, id int64, ok bool, message string) error {
 	status, percent := StatusFailed, "percent"
 	if ok {
 		status, percent = StatusDone, "100"
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := unix(time.Now())
+	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = ?, percent = `+percent+`, message = ?, finished_at = ?
 		WHERE id = ? AND finished_at IS NULL AND host_id = (SELECT id FROM hosts WHERE mac = ?)`,
-		status, message, unix(time.Now()), id, mac.String())
-	return affected(res, err)
+		status, message, now, id, mac.String())
+	if err := affected(res, err); err != nil {
+		return err
+	}
+	if !ok {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE tasks SET status = ?, message = ?, finished_at = ?
+			WHERE finished_at IS NULL AND id > ? AND host_id = (SELECT id FROM hosts WHERE mac = ?)`,
+			StatusCancelled, QueueCancelled, now, id, mac.String())
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // SaveMetrics keeps what the agent measured for a task of its PC, as JSON. A later
@@ -652,7 +742,8 @@ func (s *Store) TaskMetrics(ctx context.Context, id int64) (string, error) {
 func (s *Store) MarkStarted(ctx context.Context, mac net.HardwareAddr) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET status = ?, percent = 0, stage = '', message = '', started_at = COALESCE(started_at, ?)
-		WHERE finished_at IS NULL AND host_id = (SELECT id FROM hosts WHERE mac = ?)`,
+		WHERE id = (SELECT t.id FROM tasks t JOIN hosts h ON h.id = t.host_id
+			WHERE h.mac = ? AND t.finished_at IS NULL ORDER BY t.id LIMIT 1)`,
 		StatusStarted, unix(time.Now()), mac.String())
 	return err
 }

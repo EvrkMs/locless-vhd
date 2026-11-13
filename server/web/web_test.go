@@ -204,11 +204,29 @@ func TestHostAndTaskFlow(t *testing.T) {
 	if w := do(h, http.MethodPost, path+"/task", ""); w.Code != http.StatusCreated {
 		t.Fatalf("task: %d %s", w.Code, w.Body)
 	}
-	if w := do(h, http.MethodPost, path+"/task", ""); w.Code != http.StatusConflict {
-		t.Fatalf("second task: %d", w.Code)
+	// More tasks wait in the queue, up to its size.
+	for i := 1; i < store.MaxQueue; i++ {
+		if w := do(h, http.MethodPost, path+"/task", ""); w.Code != http.StatusCreated {
+			t.Fatalf("queued task %d: %d %s", i, w.Code, w.Body)
+		}
 	}
-	if st := getState(t, h); st.Hosts[0].Task == nil || st.Hosts[0].Name != "PC-02" {
-		t.Fatalf("host: %+v", st.Hosts[0])
+	if w := do(h, http.MethodPost, path+"/task", ""); w.Code != http.StatusConflict {
+		t.Fatalf("task over the queue: %d", w.Code)
+	}
+	st = getState(t, h)
+	if host := st.Hosts[0]; host.Task == nil || host.Name != "PC-02" || len(host.Queue) != store.MaxQueue-1 {
+		t.Fatalf("host: %+v", host)
+	}
+	// One task of the queue goes; the first stays.
+	second := st.Hosts[0].Queue[0].ID
+	if w := do(h, http.MethodDelete, "/api/tasks/"+jsonInt(second), ""); w.Code != http.StatusNoContent {
+		t.Fatalf("cancel one: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, http.MethodDelete, "/api/tasks/"+jsonInt(second), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("cancel one again: %d", w.Code)
+	}
+	if host := getState(t, h).Hosts[0]; host.Task == nil || len(host.Queue) != store.MaxQueue-2 {
+		t.Fatalf("after cancel one: %+v", host)
 	}
 	if w := do(h, http.MethodDelete, path+"/task", ""); w.Code != http.StatusNoContent {
 		t.Fatalf("cancel: %d %s", w.Code, w.Body)

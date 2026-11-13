@@ -335,6 +335,7 @@ const stuck = t => !t.finishedAt && t.stage === 'Ошибка'; // the agent wai
 
 function statusChip(t) {
   if (!t) return '—';
+  if (t.waiting) return el('span', { className: 'chip queued', textContent: 'В очереди' });
   if (stuck(t)) return el('span', { className: 'chip failed', textContent: 'Ошибка, ждёт на ПК' });
   if (!t.finishedAt && t.stage === 'Ожидание') return el('span', { className: 'chip queued', textContent: 'Ждёт образ' });
   return el('span', { className: 'chip ' + t.status, textContent: stateText[t.status] || t.status });
@@ -491,10 +492,13 @@ function hostActions(h) {
   const view = shown && shown.message && (failedTask(shown) || shown.message.length > 40)
     ? [{ text: failedTask(shown) ? 'Просмотр ошибки' : 'Сообщение задачи', run: () => showMessage({ ...shown, host: h.name }) }, null]
     : [];
-  if (h.task) {
-    return [...view, { text: 'Отменить задачу', run: () => act('DELETE', `/api/hosts/${h.id}/task`) }, null, edit, remove];
-  }
-  return [...view,
+  // With a task the next ones wait in its queue: the PC does them one by one,
+  // and a failure cancels the rest.
+  const cancel = !h.task ? [] : h.queue.length
+    ? [{ text: 'Отменить текущую задачу', run: () => act('DELETE', '/api/tasks/' + h.task.id) },
+       { text: `Отменить все задачи (${h.queue.length + 1})`, run: () => act('DELETE', `/api/hosts/${h.id}/task`) }, null]
+    : [{ text: 'Отменить задачу', run: () => act('DELETE', `/api/hosts/${h.id}/task`) }, null];
+  return [...view, ...cancel,
     { text: 'Клонировать', why: noImage, run: () => post('clone') },
     {
       text: 'Развернуть', why: noImage || (hasVersions ? '' : 'в образе ещё нет версий'),
@@ -523,7 +527,9 @@ function hostRow(h) {
     el('td', { className: 'mac', textContent: h.mac }),
     el('td', { className: h.image ? '' : 'lost', textContent: h.image || 'не выбран' }),
     el('td', { className: 'when hide-sm', textContent: ago(h.lastSeen) }),
-    el('td', { textContent: t ? kindText[t.kind] || t.kind : '—' }),
+    el('td', {}, t ? kindText[t.kind] || t.kind : '—', ...(h.task && h.queue.length
+      ? [el('div', { className: 'sub', textContent: 'дальше: ' + h.queue.map(q => kindText[q.kind] || q.kind).join(', ') })]
+      : [])),
     el('td', {}, statusChip(t)),
     el('td', { className: 'hide-sm', textContent: (h.task && h.task.stage) || '—' }),
     el('td', {}, progress(h.task)),
@@ -603,7 +609,7 @@ function activeRow(t) {
       messageButton(t), messageButton(t) ? ' ' : '',
       t.hasMetrics ? el('button', { type: 'button', textContent: 'Метрики', onclick: () => showMetrics(t) }) : '',
       t.hasMetrics ? ' ' : '',
-      button('Отменить', '', () => act('DELETE', `/api/hosts/${t.hostId}/task`))));
+      button('Отменить', '', () => act('DELETE', '/api/tasks/' + t.id))));
 }
 
 function doneRow(t) {
@@ -840,6 +846,13 @@ async function refresh() {
       (d, i) => foundRow(d, s.hosts.length + i));
     lastHosts = s.hosts;
     const active = s.tasks.filter(t => !t.finishedAt);
+    // The server lists them oldest first: the first of each PC is its task of the
+    // moment, the others wait behind it.
+    const first = new Set();
+    for (const t of active) {
+      t.waiting = first.has(t.hostId);
+      first.add(t.hostId);
+    }
     const errorsOnly = $('onlyErrors').getAttribute('aria-pressed') === 'true';
     const finished = s.tasks.filter(t => t.finishedAt && (!errorsOnly || t.status === 'failed'));
     fill(active, $('active'), $('activeTable'), $('noActive'), $('activeCount'), activeRow);

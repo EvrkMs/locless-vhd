@@ -2,12 +2,38 @@ package imaging
 
 import (
 	"context"
+	"math"
+	"os"
+	"runtime/debug"
 	"strconv"
 	"sync"
 
 	"locless-vhd/proto"
 	"locless-vhd/server/store"
 )
+
+// memoryBase is what the server needs beside the read cache: its own heap and
+// the buffers of requests in flight.
+const memoryBase = 1 << 30
+
+// boundMemory tells the Go runtime how much memory the server may take. By
+// default the heap may grow to twice what is in use before a collection, so a
+// cache of 4 GiB held 8 GiB of the server, and freed memory went back to
+// Windows only slowly. A limit set by GOMEMLIMIT is left alone.
+func boundMemory(cache int64) {
+	if os.Getenv("GOMEMLIMIT") != "" {
+		return
+	}
+	if cache <= 0 {
+		debug.SetMemoryLimit(math.MaxInt64)
+		return
+	}
+	debug.SetMemoryLimit(cache + memoryBase)
+}
+
+// releaseMemory collects the garbage and returns the free memory to Windows at
+// once, rather than over the minutes the runtime takes by itself.
+func releaseMemory() { debug.FreeOSMemory() }
 
 // MaxReadCacheGiB limits the read cache the panel may set.
 const MaxReadCacheGiB = 256

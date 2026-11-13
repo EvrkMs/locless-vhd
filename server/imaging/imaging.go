@@ -597,9 +597,13 @@ func (m *Manager) Abort(task int64) {
 	delete(m.sessions, task)
 	d := m.deploys[task]
 	delete(m.deploys, task)
+	last := d != nil && len(m.deploys) == 0
 	m.mu.Unlock()
 	if d != nil {
 		d.close()
+	}
+	if last && d.ahead != nil {
+		go releaseMemory() // the last deploy is over: give its cache back to Windows now
 	}
 	if s != nil {
 		s.mu.Lock()

@@ -72,7 +72,9 @@ func (m *Manager) StartDeploy(ctx context.Context, task int64, image string) (pr
 	index := s.chain.Index()
 	s.entries = index.Entries
 	s.active.Store(time.Now().Unix())
-	m.cache.setLimit(m.readCacheLimit(ctx))
+	limit := m.readCacheLimit(ctx)
+	m.cache.setLimit(limit)
+	boundMemory(limit)
 
 	m.mu.Lock()
 	if m.merging[image] {

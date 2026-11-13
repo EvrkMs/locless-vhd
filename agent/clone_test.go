@@ -36,6 +36,7 @@ type fakeDisk struct {
 	repairFails      int   // how many times Repair fails before it works
 	repairErr        error // what it fails with, a plain error by default
 	repairs          int
+	reads            []uint32 // positions read, in order
 }
 
 func (d *fakeDisk) Describe() string { return "тестовый диск" }
@@ -56,6 +57,7 @@ func (d *fakeDisk) ReadBlock(partition uint32, offset uint64, dst []byte) (bool,
 	if d.fail {
 		return false, errors.New("bad sector")
 	}
+	d.reads = append(d.reads, uint32(offset/testBlock))
 	raw, ok := d.blocks[uint32(offset/testBlock)]
 	if !ok {
 		return false, nil

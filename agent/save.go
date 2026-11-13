@@ -31,6 +31,8 @@ type savedStore interface {
 	LeaveSave(accounts *proto.Accounts) error
 	// OpenSaved attaches the base with save.vhdx on top as a disk to clone.
 	OpenSaved() (source, error)
+	// Changes reads which blocks save.vhdx holds itself, with nothing attached.
+	Changes() (proto.VHDXLayout, error)
 	Close() error
 }
 
@@ -141,7 +143,7 @@ func (w *worker) runSaveImage(task *proto.AgentTask) error {
 	if err != nil {
 		return fmt.Errorf("не удалось подключить %s: %w", proto.SaveFile, err)
 	}
-	defer src.Close()
+	defer func() { src.Close() }() // src changes below
 	w.screen.log("диск: " + src.Describe())
 	w.rec.Note("Диск", src.Describe())
 
@@ -166,9 +168,31 @@ func (w *worker) runSaveImage(task *proto.AgentTask) error {
 	if !shrunk {
 		w.rec.Note("Сжатие тома", "не сжат"+w.shrinkWhy())
 	}
+
+	// What changed is in the BAT of save.vhdx: the base under it is the version the
+	// state file names, unchanged. It is read with the file detached, after the
+	// shrink, which moves data too. Without it the whole disk is read.
+	w.rec.Step("Список изменений")
+	src.Close()
+	layout, layoutErr := s.Changes()
+	if layoutErr != nil {
+		w.screen.log("изменения " + proto.SaveFile + " не прочитаны, читается весь диск: " + layoutErr.Error())
+		w.rec.Note("Список изменений", layoutErr.Error())
+	}
+	if src, err = s.OpenSaved(); err != nil {
+		src = closedSource{}
+		return fmt.Errorf("не удалось снова подключить %s, том в нём остался сжатым: %w", proto.SaveFile, err)
+	}
+	var changes func(uint32) map[uint32]map[uint32]bool
+	if layoutErr == nil {
+		changes = func(blockSize uint32) map[uint32]map[uint32]bool {
+			return layout.ChangedPlaces(src.Manifest(), blockSize)
+		}
+	}
+
 	var m proto.Manifest
 	err = recovery.Run(func() (err error) {
-		m, err = w.capture(task, src)
+		m, err = w.captureOn(task, src, st.Version, changes)
 		return err
 	})
 	if err != nil && !errors.Is(err, errTaskGone) {
@@ -205,6 +229,12 @@ func (w *worker) runSaveImage(task *proto.AgentTask) error {
 	w.showResult("Готово", "Образ "+task.Image+" сохранён: "+res.File+". Дальше ПК развернёт эту версию")
 	return nil
 }
+
+// closedSource stands for a disk that could not be attached again, so the
+// deferred Close has nothing to do.
+type closedSource struct{ source }
+
+func (closedSource) Close() error { return nil }
 
 // restoreSaved gives the volume in save.vhdx its size back after the clone.
 func (w *worker) restoreSaved(src source, table []byte) error {

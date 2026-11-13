@@ -355,6 +355,54 @@ func TestDeltaHoldsOnlyChanges(t *testing.T) {
 	sameDisk(t, readAll(t, chain(t, f1)), v1)
 }
 
+// TestInheritFillsWhatWasNotRead: a delta built from the changed places only
+// reads as the whole new disk; places past a shrunk volume are dropped.
+func TestInheritFillsWhatWasNotRead(t *testing.T) {
+	v1 := disk{}
+	for pos := range uint32(20) {
+		v1[pos] = noise(uint64(pos), testBlock)
+	}
+	f1, _ := base(t, v1)
+
+	var out bytes.Buffer
+	h := Header{Kind: KindDelta, BlockSize: testBlock, ID: NewID(), Parent: f1.Header.ID, ParentSum: f1.Sum}
+	w, err := NewWriter(&out, h, f1.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := disk{2: noise(102, testBlock), 4: make([]byte, testBlock)}
+	for pos, raw := range changed {
+		if err := w.Add(3, pos, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := imageManifest()
+	m.Partitions[1].Size = 18 * testBlock // shrunk: places 18 and 19 are gone
+	if err := w.Inherit(m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Close(m); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	f2, err := OpenFile(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := disk{}
+	for pos, raw := range v1 {
+		if pos < 18 {
+			want[pos] = raw
+		}
+	}
+	want[2], want[4] = changed[2], nil // zeros read back as a zero entry
+	sameDisk(t, readAll(t, chain(t, f1, f2)), want)
+
+	if err := (&Writer{}).Inherit(m); err == nil {
+		t.Fatal("a full image inherited")
+	}
+}
+
 func TestLongChainReadsFromEveryLevel(t *testing.T) {
 	d := disk{0: noise(1, testBlock), 1: noise(2, testBlock), 2: noise(3, testBlock)}
 	f1, _ := base(t, d)

@@ -128,8 +128,18 @@ func (c *client) cloneClaim(id int64) error {
 
 // cloneStart opens a clone on the server.
 func (c *client) cloneStart(id int64) (proto.CloneInfo, error) {
+	return c.cloneStartOn(id, 0)
+}
+
+// cloneStartOn opens a clone of a disk that is version base with changes on top;
+// the answer says whether the server takes only the changes. 0 is a whole clone.
+func (c *client) cloneStartOn(id int64, base int) (proto.CloneInfo, error) {
 	var info proto.CloneInfo
-	data, err := c.send(id, "start", "application/json", nil)
+	u := c.cloneURL(id, "start")
+	if base > 0 {
+		u += "&base=" + strconv.Itoa(base)
+	}
+	data, err := c.post2(u, "application/json", nil)
 	if err != nil {
 		return info, err
 	}

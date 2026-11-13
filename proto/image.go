@@ -455,6 +455,7 @@ type Writer struct {
 	known  map[Sum]place
 	seen   map[[2]uint32]bool
 	index  []Entry
+	parent *Index // of a delta, for Inherit
 }
 
 // NewWriter starts a file. parent is nil for a .ldisk; for a .ldelta it is the
@@ -470,6 +471,7 @@ func NewWriter(w io.Writer, h Header, parent *Index) (*Writer, error) {
 			return nil, fmt.Errorf("%w: delta does not match its parent", ErrBadChain)
 		}
 		iw.chain = slices.Clone(parent.Chain)
+		iw.parent = parent
 		for _, e := range parent.Entries {
 			if !e.Zero() {
 				iw.known[e.Hash] = place{e.Level, e.Offset}
@@ -550,6 +552,34 @@ func (w *Writer) Add(partition, position uint32, raw []byte) error {
 		}
 	}
 	return w.Put(partition, position, hash)
+}
+
+// Inherit gives every place nobody put the content it has in the parent: the
+// disk was read only where it changed since the parent, so everywhere else it
+// still is the parent. Places outside what m stores, a volume shrunk below them
+// for one, are dropped. It runs once, right before Close.
+func (w *Writer) Inherit(m Manifest) error {
+	if w.parent == nil {
+		return errors.New("proto: only a delta inherits")
+	}
+	blocks := map[uint32]uint64{}
+	for _, p := range m.Partitions {
+		if p.Content == ContentBlocks {
+			blocks[p.Number] = (p.Size + uint64(w.header.BlockSize) - 1) / uint64(w.header.BlockSize)
+		}
+	}
+	for _, e := range w.parent.Entries {
+		key := [2]uint32{e.Partition, e.Position}
+		if w.seen[key] {
+			continue
+		}
+		if n, ok := blocks[e.Partition]; !ok || uint64(e.Position) >= n {
+			continue
+		}
+		w.seen[key] = true
+		w.index = append(w.index, e)
+	}
+	return nil
 }
 
 // isZero reports whether every byte is zero.

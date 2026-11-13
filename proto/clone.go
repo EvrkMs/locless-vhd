@@ -27,6 +27,10 @@ type CloneInfo struct {
 	BlockSize uint32 `json:"blockSize"`
 	Image     string `json:"image"`
 	Version   int    `json:"version"` // number of the version being created
+	// Partial: the server builds on the version the agent named as the base of its
+	// disk, so the agent sends only the places that changed. Without it the clone
+	// must be whole, whatever the agent asked for.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // CloneResult says what a finished clone produced.

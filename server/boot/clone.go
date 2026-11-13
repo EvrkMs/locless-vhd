@@ -25,7 +25,9 @@ const (
 // CloneManager receives images.
 type CloneManager interface {
 	Claim(ctx context.Context, task int64, image string) error
-	Start(ctx context.Context, task int64, image, mac string) (proto.CloneInfo, error)
+	// StartOn begins a clone; base is the version the disk holds with changes on
+	// top, 0 for a whole clone. See imaging.Manager.StartOn.
+	StartOn(ctx context.Context, task int64, image, mac string, base int) (proto.CloneInfo, error)
 	Check(task int64, hashes []proto.Sum) ([]byte, error)
 	Put(task int64, r io.Reader) error
 	Finish(ctx context.Context, task int64, m proto.Manifest) (proto.CloneResult, error)
@@ -107,7 +109,12 @@ func addCloneRoutes(mux *http.ServeMux, c Config) {
 		if !ok {
 			return
 		}
-		info, err := c.Clone.Start(r.Context(), task.ID, task.Image, mac.String())
+		// Only Save Mode clones a disk with a known base; a plain clone stays whole.
+		base := 0
+		if task.Kind == store.TaskSaveImage {
+			base, _ = strconv.Atoi(r.URL.Query().Get("base"))
+		}
+		info, err := c.Clone.StartOn(r.Context(), task.ID, task.Image, mac.String(), base)
 		if err != nil {
 			fail(w, err)
 			return

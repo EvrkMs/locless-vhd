@@ -93,12 +93,14 @@ type session struct {
 	dir    string // directory of the image
 	name   string // final file name
 	number int
-	parent int    // the version this one builds on, 0 for an .ldisk
-	path   string // file in .incoming
-	file   *os.File
-	buf    *bufio.Writer
-	writer *proto.Writer
-	closed bool // discarded: a request still under way finds nothing to write to
+	parent int // the version this one builds on, 0 for an .ldisk
+	// partial: the agent sends only places that changed since parent, see StartOn.
+	partial bool
+	path    string // file in .incoming
+	file    *os.File
+	buf     *bufio.Writer
+	writer  *proto.Writer
+	closed  bool // discarded: a request still under way finds nothing to write to
 
 	active atomic.Int64 // unix time of the last request
 }
@@ -166,6 +168,15 @@ func (m *Manager) claim(ctx context.Context, task int64, image string) error {
 // Start begins a clone. A clone already running for the task is dropped: the
 // agent started over, for example after the operator pressed retry.
 func (m *Manager) Start(ctx context.Context, task int64, image, mac string) (proto.CloneInfo, error) {
+	return m.StartOn(ctx, task, image, mac, 0)
+}
+
+// StartOn begins a clone of a disk that is version base with changes on top, as
+// in Save Mode. If base is the newest version, the answer says Partial: the agent
+// sends only the places that changed, and every other place keeps what base
+// has. Otherwise, or with base 0, the clone is whole as always: inheriting from
+// another version than the disk holds would give the image places it never had.
+func (m *Manager) StartOn(ctx context.Context, task int64, image, mac string, base int) (proto.CloneInfo, error) {
 	if !proto.ValidImageName(image) {
 		return proto.CloneInfo{}, fmt.Errorf("imaging: bad image name %q", image)
 	}
@@ -243,11 +254,12 @@ func (m *Manager) Start(ctx context.Context, task int64, image, mac string) (pro
 		image: image, mac: mac, dir: dir, number: number, parent: parentNumber,
 		name: "v" + strconv.Itoa(number) + ext,
 		path: path, file: file, buf: buf, writer: writer,
+		partial: base > 0 && latest != nil && latest.Number == base,
 	}
 	s.touch()
 	m.sessions[task] = s
-	m.log.Info("clone started", "task", task, "image", image, "version", number)
-	return proto.CloneInfo{BlockSize: header.BlockSize, Image: image, Version: number}, nil
+	m.log.Info("clone started", "task", task, "image", image, "version", number, "partial", s.partial)
+	return proto.CloneInfo{BlockSize: header.BlockSize, Image: image, Version: number, Partial: s.partial}, nil
 }
 
 // readParent returns the newest version of an image and its opened file, or nil
@@ -489,6 +501,11 @@ func (m *Manager) Finish(ctx context.Context, task int64, manifest proto.Manifes
 
 // complete writes the index and proves the result opens before anyone relies on it.
 func (s *session) complete(manifest proto.Manifest) (int64, error) {
+	if s.partial {
+		if err := s.writer.Inherit(manifest); err != nil {
+			return 0, err
+		}
+	}
 	if _, err := s.writer.Close(manifest); err != nil {
 		return 0, err
 	}

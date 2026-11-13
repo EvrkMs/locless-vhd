@@ -186,8 +186,18 @@ func (w *worker) runClone(task *proto.AgentTask) error {
 // capture sends the disk to the server and returns the table the image was taken
 // with, which is the shrunk one.
 func (w *worker) capture(task *proto.AgentTask, src source) (proto.Manifest, error) {
+	return w.captureOn(task, src, 0, nil)
+}
+
+// captureOn is capture of a disk that is version base with changes on top. When
+// the server agrees to build on base, only the places changes gives are read; the
+// server keeps the rest from base. Otherwise the whole disk is read as always.
+func (w *worker) captureOn(task *proto.AgentTask, src source, base int, changes func(blockSize uint32) map[uint32]map[uint32]bool) (proto.Manifest, error) {
 	w.rec.Step("Чтение диска и отправка")
-	info, err := w.client.cloneStart(task.ID)
+	if changes == nil {
+		base = 0
+	}
+	info, err := w.client.cloneStartOn(task.ID, base)
 	if errors.Is(err, errTaskGone) {
 		return proto.Manifest{}, err
 	}
@@ -197,6 +207,19 @@ func (w *worker) capture(task *proto.AgentTask, src source) (proto.Manifest, err
 	w.screen.log(fmt.Sprintf("сервер: образ %s, версия %d", info.Image, info.Version))
 
 	c := cloneRun{w: w, src: src, task: task.ID, blockSize: info.BlockSize, started: time.Now()}
+	switch {
+	case info.Partial:
+		c.only = changes(info.BlockSize)
+		n := 0
+		for _, set := range c.only {
+			n += len(set)
+		}
+		w.screen.log(fmt.Sprintf("читаются только изменения поверх v%d: %d блоков", base, n))
+		w.rec.Note("Чтение", fmt.Sprintf("только изменения поверх v%d: %d блоков", base, n))
+	case base > 0:
+		w.screen.log(fmt.Sprintf("сервер не строит поверх v%d: читается весь диск", base))
+		w.rec.Note("Чтение", fmt.Sprintf("весь диск: v%d уже не последняя версия", base))
+	}
 	c.speeds.update(c.started, "", 0, w.client.traffic) // the start, for the first speed
 	if err := c.readDisk(); err != nil {
 		return proto.Manifest{}, err
@@ -288,10 +311,12 @@ type cloneRun struct {
 	started   time.Time
 	reported  time.Time
 	total     uint64 // blocks expected to hold data
-	done      uint64
-	read      uint64 // bytes taken from the disk
-	sent      uint64 // bytes put on the wire
-	speeds    speeds
+	// only limits the reading to these positions of each partition, nil reads all.
+	only   map[uint32]map[uint32]bool
+	done   uint64
+	read   uint64 // bytes taken from the disk
+	sent   uint64 // bytes put on the wire
+	speeds speeds
 }
 
 // readBatch is what the disk gave for one round. An error ends the reading and
@@ -313,7 +338,11 @@ type readBatch struct {
 func (c *cloneRun) readDisk() error {
 	m := c.src.Manifest()
 	for _, p := range m.Partitions {
-		if p.Content == proto.ContentBlocks {
+		switch {
+		case p.Content != proto.ContentBlocks:
+		case c.only != nil:
+			c.total += uint64(len(c.only[p.Number]))
+		default:
 			c.total += c.src.UsedBlocks(p.Number, c.blockSize)
 		}
 	}
@@ -418,7 +447,11 @@ func (r *diskReader) run(m proto.Manifest) error {
 func (r *diskReader) readPartition(p proto.Partition) error {
 	size := uint64(r.c.blockSize)
 	rec := r.c.w.rec
+	only := r.c.only[p.Number]
 	for offset := uint64(0); offset < p.Size; offset += size {
+		if r.c.only != nil && !only[uint32(offset/size)] {
+			continue // unchanged: the server keeps it from the base
+		}
 		if r.batch.slab == nil {
 			waited := rec.Time(workReadWaits)
 			select {

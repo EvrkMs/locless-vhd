@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"maps"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +22,14 @@ type fakeSaveStore struct {
 	accounts *proto.Accounts
 	closed   bool
 	opened   bool
+	layout   *proto.VHDXLayout // what save.vhdx holds; nil: its BAT cannot be read
+}
+
+func (s *fakeSaveStore) Changes() (proto.VHDXLayout, error) {
+	if s.layout == nil {
+		return proto.VHDXLayout{}, errors.New("BAT не прочитан")
+	}
+	return *s.layout, nil
 }
 
 func (s *fakeSaveStore) State() proto.StoreState { return s.state }
@@ -120,6 +130,78 @@ func TestSaveImageMakesAVersionAndQueuesTheDeploy(t *testing.T) {
 	if hosts, _ := e.s.Hosts(ctx); hosts[0].LastTask == nil || hosts[0].LastTask.Kind != store.TaskSaveImage {
 		t.Fatalf("host: %+v", hosts[0])
 	}
+}
+
+// savedOver makes v1 on the server from blocks and returns the disk of Save Mode
+// over it: position 3 changed and 35 added. Partition 3 of the fake disk starts
+// at 32 MiB, and the VHDX blocks are 1 MiB like the image's.
+func savedOver(t *testing.T, e *cloneEnv) (map[uint32][]byte, *fakeDisk, *proto.VHDXLayout) {
+	t.Helper()
+	size := uint64(40 * testBlock)
+	blocks := map[uint32][]byte{}
+	for pos := range uint32(30) {
+		blocks[pos] = fill(byte(pos), testBlock)
+	}
+	e.run(t, &fakeDisk{blocks: blocks, size: size})
+	saved := maps.Clone(blocks)
+	saved[3] = fill(203, testBlock)
+	saved[35] = fill(235, testBlock)
+	layout := &proto.VHDXLayout{BlockSize: testBlock, SectorSize: 512, VirtualSize: 1 << 30, HasParent: true,
+		Present: []uint64{32 + 3, 32 + 35, 0}} // block 0 is the GPT: no partition there
+	return saved, &fakeDisk{blocks: saved, size: size}, layout
+}
+
+// TestSaveImageReadsOnlyTheChanges: the BAT of save.vhdx names the two blocks
+// that changed, the server keeps the rest from v1, and v2 is the whole disk.
+func TestSaveImageReadsOnlyTheChanges(t *testing.T) {
+	e := newCloneEnv(t)
+	saved, disk, layout := savedOver(t, e)
+	s := savingStore("win11", disk)
+	s.layout = layout
+	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	slices.Sort(disk.reads)
+	if !slices.Equal(disk.reads, []uint32{3, 35}) {
+		t.Fatalf("read %v, want only [3 35]", disk.reads)
+	}
+	sameBlocks(t, e.restore(t, "v1.ldisk", "v2.ldelta"), saved)
+	if !disk.shrunk || !disk.restored {
+		t.Fatalf("disk %+v", disk)
+	}
+}
+
+// TestSaveImageOverAnOlderVersion: another PC made v2 meanwhile, so the base of
+// this one is not the newest. Inheriting from v2 would be wrong: all is read.
+func TestSaveImageOverAnOlderVersion(t *testing.T) {
+	e := newCloneEnv(t)
+	saved, disk, layout := savedOver(t, e)
+	other := map[uint32][]byte{0: fill(250, testBlock), 1: fill(251, testBlock)}
+	e.run(t, &fakeDisk{blocks: other, size: 40 * testBlock}) // v2 from elsewhere
+
+	s := savingStore("win11", disk) // the base is v1
+	s.layout = layout
+	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if len(disk.reads) != 40 { // every place of the partition, the free ones too
+		t.Fatalf("read %d places, want all 40", len(disk.reads))
+	}
+	sameBlocks(t, e.restore(t, "v1.ldisk", "v2.ldelta", "v3.ldelta"), saved)
+}
+
+// TestSaveImageWithoutTheBAT: the changes are unknown, so all is read.
+func TestSaveImageWithoutTheBAT(t *testing.T) {
+	e := newCloneEnv(t)
+	saved, disk, _ := savedOver(t, e)
+	s := savingStore("win11", disk)
+	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if len(disk.reads) != 40 { // every place of the partition, the free ones too
+		t.Fatalf("read %d places, want all 40", len(disk.reads))
+	}
+	sameBlocks(t, e.restore(t, "v1.ldisk", "v2.ldelta"), saved)
 }
 
 func TestSaveImageNeedsSaveMode(t *testing.T) {

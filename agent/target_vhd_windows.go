@@ -623,6 +623,24 @@ func (s *vhdStore) OpenSaved() (source, error) {
 	return &attachedSource{physicalDisk: src, detach: s.d.Close}, nil
 }
 
+// Changes reads the BAT of save.vhdx. The file must not be attached: the BAT of an
+// attached disk may still sit in its log.
+func (s *vhdStore) Changes() (proto.VHDXLayout, error) {
+	f, err := os.Open(storePath(proto.SaveFile))
+	if err != nil {
+		return proto.VHDXLayout{}, err
+	}
+	defer f.Close()
+	l, err := proto.ReadVHDXLayout(f)
+	if err != nil {
+		return l, err
+	}
+	if !l.HasParent {
+		return l, fmt.Errorf("%s не разностный диск", proto.SaveFile)
+	}
+	return l, nil
+}
+
 // attachedSource is a disk to clone that lives in an attached virtual disk.
 type attachedSource struct {
 	*physicalDisk

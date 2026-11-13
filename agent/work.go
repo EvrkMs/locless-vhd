@@ -71,6 +71,7 @@ type worker struct {
 	openDisk   func() (source, error)               // the disk to clone
 	openTarget func() (target, error)               // the disk to overwrite
 	openVHD    func(size uint64) (vhdTarget, error) // a virtual disk of that size on the store
+	openStore  func() (savedStore, error)           // the store with a deploy into VHDX, for Save Mode
 	abort      chan struct{}                        // the operator pressed Esc before a deploy
 	names      []string                             // stages of the current task
 	taskID     int64                                // the task being worked on, 0 before the server named one
@@ -174,6 +175,14 @@ func (w *worker) attempt() error {
 	}
 	if task.Kind == proto.TaskKindPrepare {
 		return w.runWipe(task, prepareJob)
+	}
+	switch task.Kind {
+	case proto.TaskKindSaveMode:
+		return w.runSaveMode(task)
+	case proto.TaskKindSaveImage:
+		return w.runSaveImage(task)
+	case proto.TaskKindSaveDiscard:
+		return w.runSaveDiscard(task)
 	}
 	if len(task.Table) > 0 {
 		if err := w.repair(task.Table); err != nil {

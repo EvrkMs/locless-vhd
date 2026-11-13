@@ -108,7 +108,7 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	if err := protectStore(storeLetter + `:\`); err != nil {
 		return fmt.Errorf("права на хранилище: %w", err)
 	}
-	names := append([]string{proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB, proto.LocalFile}, proto.OldFiles...)
+	names := append([]string{proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB, proto.SaveFile, proto.LocalFile}, proto.OldFiles...)
 	for _, name := range append(names, proto.BaseFile) {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("старый файл %s: %w", name, err)
@@ -211,7 +211,7 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if err := d.ensureLocal(); err != nil {
 		return err
 	}
-	if err := d.installReset(); err != nil {
+	if err := d.installReset(proto.LocalFile); err != nil {
 		return fmt.Errorf("служба сброса: %w", err)
 	}
 	if !accounts.Empty() {
@@ -223,10 +223,25 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 			return err
 		}
 	}
+	// What a session or Save Mode left is gone once the new entry is in place.
+	for _, name := range []string{proto.DiffFile, proto.DiffFileB} {
+		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("старый файл %s: %w", name, err)
+		}
+	}
 	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
 		return err
 	}
-	if err := d.attach(proto.DiffFile); err != nil {
+	if err := d.bootFrom(proto.DiffFile); err != nil {
+		return err
+	}
+	state.Base, state.Local, state.Diff, state.Format, state.Save = proto.BaseFile, proto.LocalFile, proto.DiffFile, "vhdx", ""
+	return writeState(state)
+}
+
+// bootFrom makes the firmware boot the Windows of a file of the store.
+func (d *vhdDisk) bootFrom(name string) error {
+	if err := d.attach(name); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -245,7 +260,10 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if err != nil {
 		return fmt.Errorf("bcdboot: %w: %s", err, lastLine(out))
 	}
-	state.Base, state.Local, state.Diff, state.Format = proto.BaseFile, proto.LocalFile, proto.DiffFile, "vhdx"
+	return nil
+}
+
+func writeState(state proto.StoreState) error {
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -253,10 +271,19 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	return os.WriteFile(storePath(proto.StateFile), b, 0o644)
 }
 
-// installReset puts the agent into local as the reset service, so every
-// differencing disk made on top of it has it.
-func (d *vhdDisk) installReset() (err error) {
-	if err := d.attach(proto.LocalFile); err != nil {
+func readState() (proto.StoreState, error) {
+	var st proto.StoreState
+	b, err := os.ReadFile(storePath(proto.StateFile))
+	if err != nil {
+		return st, err
+	}
+	return st, json.Unmarshal(b, &st)
+}
+
+// installReset puts the agent as the reset service into a file of the store:
+// local, so every differencing disk made on top of it has it, or save.vhdx.
+func (d *vhdDisk) installReset(name string) (err error) {
+	if err := d.attach(name); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -374,13 +401,24 @@ func (d *vhdDisk) attach(name string) error {
 // mountWindows gives the largest NTFS partition of the attached disk, the one the
 // image fills, the letter SetName and bcdboot expect.
 func (d *vhdDisk) mountWindows() error {
-	layout, err := readTable(d.attached.number)
+	number, err := d.windowsPartition()
 	if err != nil {
 		return err
 	}
+	return runDiskpart(fmt.Sprintf("select disk %d", d.attached.number), "rescan",
+		fmt.Sprintf("select partition %d", number), "assign letter="+windowsLetter+" noerr")
+}
+
+// windowsPartition returns the number of the largest partition of the attached
+// disk that is neither EFI nor MSR: the Windows volume.
+func (d *vhdDisk) windowsPartition() (uint32, error) {
+	layout, err := readTable(d.attached.number)
+	if err != nil {
+		return 0, err
+	}
 	_, entries, err := parseLayout(layout)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var windows *tableEntry
 	for i, e := range entries {
@@ -392,10 +430,145 @@ func (d *vhdDisk) mountWindows() error {
 		}
 	}
 	if windows == nil {
-		return errors.New("в VHDX нет раздела Windows")
+		return 0, errors.New("в VHDX нет раздела Windows")
 	}
-	return runDiskpart(fmt.Sprintf("select disk %d", d.attached.number), "rescan",
-		fmt.Sprintf("select partition %d", windows.number), "assign letter="+windowsLetter+" noerr")
+	return windows.number, nil
+}
+
+// vhdStore is the store of a PC that holds a deploy into VHDX, for Save Mode.
+type vhdStore struct {
+	d     *vhdDisk
+	state proto.StoreState
+}
+
+// openSavedStore finds the prepared store of this PC, gives it its letter and
+// reads the state file.
+func openSavedStore() (savedStore, error) {
+	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
+		return nil, errors.New("хранилище меняется только из WinPE")
+	}
+	number, err := chooseTarget(scanDisks())
+	if err != nil {
+		return nil, err
+	}
+	phys, err := newWriteDisk(number)
+	if err != nil {
+		return nil, err
+	}
+	_, entries, err := parseLayout(phys.layout)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].start < entries[j].start })
+	parts := make([]proto.Partition, len(entries))
+	for i, e := range entries {
+		parts[i] = proto.Partition{TypeGUID: e.typeGUID, Name: e.name}
+	}
+	if phys.fresh || !proto.IsStoreLayout(parts) {
+		return nil, errors.New("на диске нет хранилища LVHD")
+	}
+	if err := mountStore(number); err != nil {
+		return nil, err
+	}
+	st, err := readState()
+	if err != nil {
+		return nil, fmt.Errorf("файл состояния: %w", err)
+	}
+	return &vhdStore{d: &vhdDisk{phys: phys, prepared: true}, state: st}, nil
+}
+
+func (s *vhdStore) State() proto.StoreState { return s.state }
+
+func (s *vhdStore) Close() error {
+	if s.d.attached != nil {
+		return s.d.Close()
+	}
+	return nil
+}
+
+// EnterSave makes save.vhdx on top of the base. The base holds the volume as the
+// clone shrank it and local stretches it; save.vhdx has no local below, so the
+// volume is stretched in it. The reset service goes there too: in Save Mode it
+// does nothing, but without it the virtual disk would grow to its full size at
+// boot. The state file changes only after the boot entry points at save.vhdx, and
+// the differencing disks of the players go last: until then the PC boots as
+// before.
+func (s *vhdStore) EnterSave() error {
+	d := s.d
+	if err := os.Remove(storePath(proto.SaveFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("старый %s: %w", proto.SaveFile, err)
+	}
+	if err := createVirtualDisk(storePath(proto.SaveFile), storePath(proto.BaseFile), 0, 0); err != nil {
+		return err
+	}
+	if err := d.attach(proto.SaveFile); err != nil {
+		return err
+	}
+	number, err := d.windowsPartition()
+	if err == nil {
+		err = runDiskpart(fmt.Sprintf("select disk %d", d.attached.number), "rescan",
+			fmt.Sprintf("select partition %d", number), "extend filesystem")
+	}
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("том в %s не растянут: %w", proto.SaveFile, err)
+	}
+	if err := d.installReset(proto.SaveFile); err != nil {
+		return fmt.Errorf("служба сброса: %w", err)
+	}
+	if err := d.bootFrom(proto.SaveFile); err != nil {
+		return err
+	}
+	st := s.state
+	st.Save, st.Diff = proto.SaveFile, ""
+	if err := writeState(st); err != nil {
+		return err
+	}
+	s.state = st
+	for _, name := range []string{proto.DiffFile, proto.DiffFileB} {
+		os.Remove(storePath(name)) // a session of the players, nothing more; space for save.vhdx
+	}
+	return nil
+}
+
+// LeaveSave boots the usual chain again and then removes save.vhdx.
+func (s *vhdStore) LeaveSave(accounts *proto.Accounts) error {
+	st := s.state
+	st.Save = ""
+	if err := s.d.Boot(st, accounts); err != nil {
+		return err
+	}
+	s.state, _ = readState()
+	if err := os.Remove(storePath(proto.SaveFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s не удалён: %w", proto.SaveFile, err)
+	}
+	return nil
+}
+
+// OpenSaved attaches save.vhdx, and with it the base, as a disk to clone. Closing
+// the source detaches it.
+func (s *vhdStore) OpenSaved() (source, error) {
+	if err := s.d.attach(proto.SaveFile); err != nil {
+		return nil, err
+	}
+	src, err := openDisk(s.d.attached.number)
+	if err != nil {
+		s.d.Close()
+		return nil, err
+	}
+	return &attachedSource{physicalDisk: src, detach: s.d.Close}, nil
+}
+
+// attachedSource is a disk to clone that lives in an attached virtual disk.
+type attachedSource struct {
+	*physicalDisk
+	detach func() error
+}
+
+func (a *attachedSource) Close() error {
+	return errors.Join(a.physicalDisk.Close(), a.detach())
 }
 
 // mountStore gives the store its letter, which the partition attribute keeps

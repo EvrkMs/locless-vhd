@@ -97,6 +97,7 @@ func runTask(cfg proto.AgentConfig) error {
 		openDisk:   openSystemDisk,
 		openTarget: openTarget,
 		openVHD:    openVHDTarget,
+		openStore:  openSavedStore,
 		abort:      make(chan struct{}, 1),
 		reboot: func() {
 			reboot.Store(true)

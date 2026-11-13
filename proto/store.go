@@ -17,6 +17,20 @@ const TaskKindPrepare = "prepare"
 // differencing disk on top of it.
 const TaskKindDeployVHD = "deployvhd"
 
+// Save Mode makes one PC the master of its image. Windows boots from save.vhdx
+// right on top of the base, without local and without the reset, so the changes
+// of the operator survive reboots and hold nothing that belongs to this PC.
+const (
+	// TaskKindSaveMode puts save.vhdx on top of the base and boots Windows from it.
+	TaskKindSaveMode = "savemode"
+	// TaskKindSaveImage clones the disk the PC sees in Save Mode, the base with
+	// save.vhdx on top, into a new version of the image. The server then queues a
+	// deploy of that version, which brings the PC back to the usual chain.
+	TaskKindSaveImage = "saveimage"
+	// TaskKindSaveDiscard throws save.vhdx away and boots the usual chain again.
+	TaskKindSaveDiscard = "savediscard"
+)
+
 // The layout of a prepared disk.
 const (
 	// StoreLabel is the label of the NTFS volume that holds the virtual disks.
@@ -120,6 +134,9 @@ const (
 	LocalFile = "local.vhdx"  // on top of the base: what belongs to this PC only
 	DiffFile  = "diff-a.vhdx" // on top of local: the differencing disk Windows boots from
 	DiffFileB = "diff-b.vhdx" // its pair: the reset prepares one while Windows runs on the other
+	// SaveFile holds the changes of Save Mode, on top of the base and not of local:
+	// what local holds belongs to this PC and must not reach the image.
+	SaveFile  = "save.vhdx"
 	StateFile = "locless-vhd.json"
 	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
 	// AccountsFile holds the accounts the reset service sets on every boot. It
@@ -208,12 +225,15 @@ func AutoVHDSize(store, memory uint64) uint64 {
 // StoreState is the state file on the store: what the base holds, so the server
 // can tell which version a PC has.
 type StoreState struct {
-	Image   string    `json:"image"`
-	Version int       `json:"version"`
-	Format  string    `json:"format"` // "vhdx"
-	VHDSize uint64    `json:"vhdSize"`
-	Base    string    `json:"base"`
-	Local   string    `json:"local,omitempty"` // the parent of the differencing disks; "" means the base
-	Diff    string    `json:"diff"`
+	Image   string `json:"image"`
+	Version int    `json:"version"`
+	Format  string `json:"format"` // "vhdx"
+	VHDSize uint64 `json:"vhdSize"`
+	Base    string `json:"base"`
+	Local   string `json:"local,omitempty"` // the parent of the differencing disks; "" means the base
+	Diff    string `json:"diff"`
+	// Save is set in Save Mode: Windows boots from this file on top of the base,
+	// and the reset service leaves everything alone.
+	Save    string    `json:"save,omitempty"`
 	Written time.Time `json:"written"`
 }

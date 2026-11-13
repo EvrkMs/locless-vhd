@@ -393,6 +393,59 @@ func TestFailureCancelsTheQueue(t *testing.T) {
 	}
 }
 
+// TestSaveModeFlow: Save Mode holds through a failed save and a saved image,
+// and the deploy the save queued ends it.
+func TestSaveModeFlow(t *testing.T) {
+	s := open(t)
+	h := addHost(t, s, macA, "PC-01")
+	saving := func() bool {
+		hosts, err := s.Hosts(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hosts[0].SaveMode
+	}
+	done := func(kind, image string, ok bool) {
+		t.Helper()
+		task, err := s.QueueTask(ctx, h.ID, kind, image)
+		if err != nil {
+			t.Fatalf("QueueTask: %v", err)
+		}
+		if err := s.FinishTask(ctx, macA, task.ID, ok, ""); err != nil {
+			t.Fatalf("FinishTask: %v", err)
+		}
+	}
+
+	done(TaskDeployVHD, "win11", true)
+	if saving() {
+		t.Fatal("in Save Mode after a deploy")
+	}
+	done(TaskSaveMode, "", true)
+	if !saving() {
+		t.Fatal("not in Save Mode")
+	}
+	done(TaskSaveImage, "win11", false)
+	if ok, _ := s.HasTask(ctx, macA); ok || !saving() {
+		t.Fatalf("after a failed save: task %v, saving %v", ok, saving())
+	}
+	done(TaskSaveImage, "win11", true)
+	next, _ := s.ActiveTask(ctx, macA)
+	if next == nil || next.Kind != TaskDeployVHD || next.Image != "win11" || !saving() {
+		t.Fatalf("after the save: next %+v, saving %v", next, saving())
+	}
+	if err := s.FinishTask(ctx, macA, next.ID, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if saving() {
+		t.Fatal("still in Save Mode after the deploy")
+	}
+	done(TaskSaveMode, "", true)
+	done(TaskSaveDiscard, "", true)
+	if saving() {
+		t.Fatal("still in Save Mode after leaving it")
+	}
+}
+
 func TestQueueIsBounded(t *testing.T) {
 	s := open(t)
 	h := addHost(t, s, macA, "PC-01")

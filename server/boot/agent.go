@@ -122,6 +122,9 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 				internalError(w, c, err)
 				return
 			}
+		}
+		// Both make the differencing disk the players boot again.
+		if task.Kind == store.TaskDeployVHD || task.Kind == store.TaskSaveDiscard {
 			if out.Accounts, err = accounts(r.Context(), c.Agent); err != nil {
 				internalError(w, c, err)
 				return

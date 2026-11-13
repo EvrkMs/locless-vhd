@@ -46,6 +46,11 @@ type resetOps interface {
 // and are set again on every boot. A failure there is logged and does not stop
 // the reset.
 func startup(ops resetOps) (string, error) {
+	// In Save Mode the session is the work of the operator on the image: neither
+	// the reset nor the accounts of the players may touch it.
+	if st, err := ops.ReadState(); err == nil && st.Save != "" {
+		return "режим сохранения (Save Mode): Windows работает с " + st.Save + ", сброса нет", nil
+	}
 	accounts, err := ops.ReadAccounts()
 	if err != nil {
 		accounts, err = nil, fmt.Errorf("файл учётных записей: %w", err)
@@ -74,6 +79,9 @@ func resetDiff(ops resetOps) (string, error) {
 	}
 	if st.Base == "" {
 		return "", errors.New("в файле состояния нет base: это не деплой в VHDX")
+	}
+	if st.Save != "" {
+		return "", errors.New("режим сохранения: сброс выключен")
 	}
 	booted := st.Diff
 	if booted != proto.DiffFile && booted != proto.DiffFileB {

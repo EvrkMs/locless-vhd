@@ -53,7 +53,9 @@ func (resetService) Execute(_ []string, requests <-chan svc.ChangeRequest, statu
 		select {
 		case err := <-done:
 			status <- svc.Status{State: svc.StopPending}
-			if err != nil {
+			// Save Mode puts the service into the image itself, so a deploy onto a
+			// plain disk brings it along: there it has nothing to do.
+			if err != nil && !errors.Is(err, errNoStore) {
 				return true, 1
 			}
 			return false, 0
@@ -93,6 +95,9 @@ func resetOnce() (string, error) {
 	return said, err
 }
 
+// errNoStore means this Windows does not boot from a virtual disk on a store.
+var errNoStore = errors.New("хранилище не найдено")
+
 // findStoreVolume finds the store by its label, without a letter: the partition
 // attribute keeps Windows from giving it one.
 func findStoreVolume() (string, error) {
@@ -111,7 +116,7 @@ func findStoreVolume() (string, error) {
 		}
 		if err := windows.FindNextVolume(h, &buf[0], uint32(len(buf))); err != nil {
 			if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-				return "", fmt.Errorf("том %s не найден", proto.StoreLabel)
+				return "", fmt.Errorf("%w: тома %s нет", errNoStore, proto.StoreLabel)
 			}
 			return "", err
 		}

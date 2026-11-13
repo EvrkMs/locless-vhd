@@ -167,6 +167,24 @@ func TestResetGoesOnAfterAnAccountFailure(t *testing.T) {
 	}
 }
 
+// TestSaveModeTouchesNothing: the work of the operator survives the boot, and
+// the accounts of the players stay out of the image.
+func TestSaveModeTouchesNothing(t *testing.T) {
+	s := newFakeStore(proto.SaveFile, proto.DiffFile)
+	s.state.Save = proto.SaveFile
+	s.accounts = &proto.Accounts{AdminPassword: "secret", PlayerUser: "Player"}
+	said, err := startup(s)
+	if err != nil {
+		t.Fatalf("startup: %v", err)
+	}
+	if len(s.steps) != 0 || s.applied != nil || !strings.Contains(said, "Save Mode") {
+		t.Fatalf("steps %v, applied %+v, said %q", s.steps, s.applied, said)
+	}
+	if _, err := resetDiff(s); err == nil || len(s.steps) != 0 {
+		t.Fatalf("resetDiff in Save Mode: %v, steps %v", err, s.steps)
+	}
+}
+
 // TestUsualBootWithoutAccounts: without the file it is the plain reset.
 func TestUsualBootWithoutAccounts(t *testing.T) {
 	s := newFakeStore(proto.DiffFile, proto.DiffFile)

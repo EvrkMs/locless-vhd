@@ -73,7 +73,7 @@ func ownTask(w http.ResponseWriter, r *http.Request, c Config, kinds ...string) 
 // addCloneRoutes registers the endpoints a clone goes through.
 func addCloneRoutes(mux *http.ServeMux, c Config) {
 	cloneTask := func(w http.ResponseWriter, r *http.Request) (*store.Task, net.HardwareAddr, bool) {
-		return ownTask(w, r, c, store.TaskClone)
+		return ownTask(w, r, c, store.TaskClone, store.TaskSaveImage)
 	}
 	fail := func(w http.ResponseWriter, err error) {
 		switch {

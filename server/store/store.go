@@ -37,6 +37,13 @@ const (
 	TaskPrepare = proto.TaskKindPrepare
 	// TaskDeployVHD writes an image into a virtual disk on the store of the PC.
 	TaskDeployVHD = proto.TaskKindDeployVHD
+	// TaskSaveMode makes the PC the master of its image, see proto.TaskKindSaveMode.
+	TaskSaveMode = proto.TaskKindSaveMode
+	// TaskSaveImage clones the master into a new version; FinishTask then queues
+	// a deploy of it for the same PC.
+	TaskSaveImage = proto.TaskKindSaveImage
+	// TaskSaveDiscard leaves Save Mode without saving.
+	TaskSaveDiscard = proto.TaskKindSaveDiscard
 )
 
 // Task statuses.
@@ -170,8 +177,9 @@ type Host struct {
 	Image    string     `json:"image"`  // the image this PC belongs to
 	Shrunk   bool       `json:"shrunk"` // its volume may still wait to get its size back
 	LastSeen *time.Time `json:"lastSeen"`
-	Task     *Task      `json:"task"`  // the one the PC does now or next
-	Queue    []Task     `json:"queue"` // the ones after it, in order
+	Task     *Task      `json:"task"`     // the one the PC does now or next
+	Queue    []Task     `json:"queue"`    // the ones after it, in order
+	SaveMode bool       `json:"saveMode"` // the PC is the master of its image, see TaskSaveMode
 	LastTask *Task      `json:"lastTask"`
 }
 
@@ -394,8 +402,13 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	saving, err := s.saveModes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for i := range hosts {
 		hosts[i].LastTask = last[hosts[i].ID]
+		hosts[i].SaveMode = saving[hosts[i].ID]
 		hosts[i].Queue = queues[hosts[i].ID]
 		if hosts[i].Queue == nil {
 			hosts[i].Queue = []Task{}
@@ -713,7 +726,44 @@ func (s *Store) FinishTask(ctx context.Context, mac net.HardwareAddr, id int64, 
 			return err
 		}
 	}
+	// A master that saved its image gets that version deployed: its base becomes
+	// the version on the server block for block, and the usual chain comes back.
+	// Until then it stays in Save Mode with the base it had, so nothing is lost if
+	// the deploy waits.
+	if ok {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO tasks(host_id, kind, image, status, created_at)
+			SELECT host_id, ?, image, ?, ? FROM tasks WHERE id = ? AND kind = ?`,
+			TaskDeployVHD, StatusQueued, now, id, TaskSaveImage)
+		if err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// saveModes tells which hosts are in Save Mode: the last task that changed the
+// chain on their store, among those that finished well, put them there. Saving
+// keeps a PC in it until the deploy that follows.
+func (s *Store) saveModes(ctx context.Context) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT host_id, kind FROM tasks
+		WHERE id IN (SELECT MAX(id) FROM tasks WHERE status = ? AND kind IN (?, ?, ?, ?, ?, ?) GROUP BY host_id)`,
+		StatusDone, TaskSaveMode, TaskSaveDiscard, TaskDeployVHD, TaskDeploy, TaskPrepare, TaskFormat)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var host int64
+		var kind string
+		if err := rows.Scan(&host, &kind); err != nil {
+			return nil, err
+		}
+		out[host] = kind == TaskSaveMode
+	}
+	return out, rows.Err()
 }
 
 // SaveMetrics keeps what the agent measured for a task of its PC, as JSON. A later

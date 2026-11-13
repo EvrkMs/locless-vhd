@@ -329,7 +329,8 @@ function formatSize(n) {
 
 const vhdText = size => size ? formatSize(size) : 'по месту на ПК';
 
-const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', deployvhd: 'Развёртывание в VHDX', format: 'Форматирование', prepare: 'Подготовка диска' };
+const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', deployvhd: 'Развёртывание в VHDX', format: 'Форматирование', prepare: 'Подготовка диска',
+  savemode: 'Включение Save Mode', saveimage: 'Сохранение в образ', savediscard: 'Выход из Save Mode' };
 const stateText = { queued: 'Ждёт загрузки ПК', started: 'Загружается WinPE', running: 'Выполняется', done: 'Готово', failed: 'Ошибка', cancelled: 'Отменена' };
 const stuck = t => !t.finishedAt && t.stage === 'Ошибка'; // the agent waits on its error screen
 
@@ -511,7 +512,23 @@ function hostActions(h) {
     { text: 'Проверить связь', run: () => post('agent') },
     { text: 'Форматировать в том WB', danger: true, confirm: `Стереть диск ${h.name}?`, run: () => post('format') },
     { text: 'Подготовить диск под VHDX', danger: true, confirm: `Стереть диск ${h.name}?`, run: () => post('prepare') },
-    null, edit, remove,
+    null, ...saveActions(h, post, noImage), null, edit, remove,
+  ];
+}
+
+// saveActions are the steps of Save Mode: the PC becomes the master of its image,
+// what is installed on it survives reboots, and saving makes a new version that
+// the server then deploys back onto this PC.
+function saveActions(h, post, noImage) {
+  if (!h.saveMode) {
+    return [{
+      text: 'Включить Save Mode', why: noImage,
+      confirm: `${h.name} перестанет сбрасываться: изменения пойдут в образ ${h.image}. Включить?`, run: () => post('savemode'),
+    }];
+  }
+  return [
+    { text: 'Сохранить в образ', why: noImage, confirm: `Сохранить ${h.name} новой версией ${h.image}?`, run: () => post('saveimage') },
+    { text: 'Выйти из Save Mode без сохранения', danger: true, confirm: `Выбросить изменения ${h.name}?`, run: () => post('savediscard') },
   ];
 }
 
@@ -522,6 +539,7 @@ function hostRow(h) {
   const name = el('td', { title: h.image ? '' : 'Образ не выбран' },
     ...(h.image ? [] : [el('span', { className: 'nodot' })]), el('span', { className: 'name', textContent: h.name }));
   if (h.shrunk && !h.task) name.append(el('div', { className: 'sub lost', textContent: 'Том сжат: запустите «Проверить связь»' }));
+  if (h.saveMode) name.append(el('div', { className: 'sub', textContent: 'Save Mode: не сбрасывается, мастер образа' }));
   return el('tr', {},
     name,
     el('td', { className: 'mac', textContent: h.mac }),

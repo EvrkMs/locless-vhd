@@ -229,6 +229,11 @@ form input { flex: 1 1 180px; }
       <p id="exitNote">Если компьютер после сети выпадает в настройки UEFI, попробуйте другой способ.</p>
     </div>
     <div class="field">
+      <label for="confirmSeconds">Отсчёт перед стиранием диска, секунд</label>
+      <input id="confirmSeconds" type="number" min="0" max="300" step="1" style="max-width: 120px">
+      <p id="confirmNote">Столько секунд агент показывает предупреждение перед развёртыванием, форматированием и подготовкой диска, Esc на ПК отменяет. 0 — без отсчёта. Действует на задачи, которые агент получит после сохранения.</p>
+    </div>
+    <div class="field">
       <label>Каталог загрузки</label>
       <div class="value" id="rootDir"></div>
       <p>Папка EFI в папке сервера. Файлы отсюда доступны всем в сети без пароля, поэтому образы здесь хранить нельзя.</p>
@@ -877,6 +882,7 @@ async function loadSettings() {
     const s = await api('GET', '/api/settings');
     $('imageDir').value = s.imageDir;
     $('exitMode').value = s.exitMode;
+    $('confirmSeconds').value = s.confirmSeconds;
     $('rootDir').textContent = s.root;
     $('playerUser').value = s.playerUser;
     $('adminPassword').placeholder = s.adminPasswordSet ? 'задан, введите новый, чтобы сменить' : 'не задан';
@@ -906,6 +912,18 @@ $('clientAddr').addEventListener('change', async e => {
     $('clientAddrNote').textContent = 'Сохранено';
     $('clientAddrNote').className = 'saved';
     refresh();
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+$('confirmSeconds').addEventListener('change', async e => {
+  try {
+    const s = await api('PUT', '/api/settings', { confirmSeconds: Number(e.target.value) });
+    e.target.value = s.confirmSeconds;
+    showError('');
+    $('confirmNote').textContent = s.confirmSeconds === '0' ? 'Сохранено: диск стирается сразу, без отсчёта' : 'Сохранено';
+    $('confirmNote').className = 'saved';
   } catch (err) {
     showError(err.message);
   }

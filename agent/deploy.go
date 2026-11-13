@@ -16,9 +16,18 @@ import (
 	"locless-vhd/recovery"
 )
 
-// confirmSeconds is how long the screen warns before the disk is touched. It is
-// the last chance to stop a deploy started on the wrong PC.
+// confirmSeconds is how long the screen warns before the disk is touched, unless
+// the panel says otherwise. It is the last chance to stop a deploy started on the
+// wrong PC.
 const confirmSeconds = 20
+
+// confirmFor is the warning the task asks for.
+func confirmFor(task *proto.AgentTask) int {
+	if task == nil || task.ConfirmSeconds == nil || *task.ConfirmSeconds < 0 {
+		return confirmSeconds
+	}
+	return min(*task.ConfirmSeconds, proto.MaxConfirmSeconds)
+}
 
 // imageWait is how often a waiting task asks whether its turn has come.
 const imageWait = 10 * time.Second
@@ -430,13 +439,22 @@ func (w *worker) waitTurn(task *proto.AgentTask, ask func() error) error {
 }
 
 // confirmWipe warns on the screen and returns false if the operator pressed Esc.
+// With no warning set it still honours an Esc pressed before.
 func (w *worker) confirmWipe(dst target, result string) bool {
+	if w.confirm == 0 {
+		select {
+		case <-w.abort:
+			return false
+		default:
+			return true
+		}
+	}
 	before := w.screen.snapshot()
 	w.screen.update(func(st *ui.State) {
 		st.Title = "Диск будет стёрт"
 		st.Detail = dst.Describe() + " → " + result
 	})
-	for left := confirmSeconds; left > 0; left-- {
+	for left := w.confirm; left > 0; left-- {
 		w.screen.update(func(st *ui.State) {
 			st.Center, st.Caption = fmt.Sprint(left), "до начала записи"
 			st.Hint = "Esc — отменить"

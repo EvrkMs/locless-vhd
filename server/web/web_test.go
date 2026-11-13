@@ -941,3 +941,21 @@ func TestScanFindsCopiedImages(t *testing.T) {
 		t.Fatalf("second scan: %+v", versions)
 	}
 }
+
+func TestConfirmSecondsSetting(t *testing.T) {
+	h, s, _ := panelWithRoot(t)
+	if w := do(h, http.MethodGet, "/api/settings", ""); !strings.Contains(w.Body.String(), `"confirmSeconds":"20"`) {
+		t.Fatalf("default: %s", w.Body)
+	}
+	if w := do(h, http.MethodPut, "/api/settings", `{"confirmSeconds":0}`); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body)
+	}
+	if v, _ := s.Setting(context.Background(), store.SettingConfirmSeconds); v != "0" {
+		t.Fatalf("stored %q", v)
+	}
+	for _, body := range []string{`{"confirmSeconds":-1}`, `{"confirmSeconds":301}`} {
+		if w := do(h, http.MethodPut, "/api/settings", body); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", body, w.Code)
+		}
+	}
+}

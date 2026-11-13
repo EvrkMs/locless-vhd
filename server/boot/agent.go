@@ -38,6 +38,19 @@ type AgentStore interface {
 	Setting(ctx context.Context, key string) (string, error)
 }
 
+// confirmSeconds reads the warning before a wipe set in the panel, nil if unset.
+func confirmSeconds(ctx context.Context, s AgentStore) (*int, error) {
+	v, err := s.Setting(ctx, store.SettingConfirmSeconds)
+	if err != nil || v == "" {
+		return nil, err
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > proto.MaxConfirmSeconds {
+		return nil, nil // the panel never stores that; the agent's default is safe
+	}
+	return &n, nil
+}
+
 // accounts reads what the first boot after a deploy into VHDX does to the users
 // of Windows, nil if the panel sets nothing.
 func accounts(ctx context.Context, s AgentStore) (*proto.Accounts, error) {
@@ -100,6 +113,10 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 			return
 		}
 		out := proto.AgentTask{ID: task.ID, Kind: task.Kind, Image: task.Image, Table: table}
+		if out.ConfirmSeconds, err = confirmSeconds(r.Context(), c.Agent); err != nil {
+			internalError(w, c, err)
+			return
+		}
 		if task.Kind == store.TaskDeployVHD {
 			if out.VHDSize, err = c.Agent.ImageVHDSize(r.Context(), task.Image); err != nil {
 				internalError(w, c, err)

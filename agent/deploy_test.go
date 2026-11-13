@@ -713,3 +713,28 @@ func TestDeployVHDFailsWithoutBoot(t *testing.T) {
 		t.Fatalf("accounts without settings: %+v", v.accounts)
 	}
 }
+
+// TestNoWarningWhenThePanelSaysZero: 0 seconds wipes at once, Esc still counts.
+func TestNoWarningWhenThePanelSaysZero(t *testing.T) {
+	e := newCloneEnv(t)
+	ctx := context.Background()
+	e.s.SetSetting(ctx, store.SettingConfirmSeconds, "0")
+	if _, err := e.s.CreateTask(ctx, e.host.ID, store.TaskPrepare, ""); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	d := &fakeTarget{}
+	w, _ := testWorker(e.url)
+	w.abort = make(chan struct{}, 1)
+	w.openTarget = func() (target, error) { return d, nil }
+	ticks := 0
+	w.sleep = func(time.Duration) { ticks++ }
+	if err := w.attempt(); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if !d.store || ticks != 0 {
+		t.Fatalf("store %v, ticks %d", d.store, ticks)
+	}
+	if confirmFor(&proto.AgentTask{}) != confirmSeconds {
+		t.Fatal("no setting must keep the default")
+	}
+}

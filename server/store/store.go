@@ -128,6 +128,9 @@ const (
 	// SettingPlayerUser is the account players use: a deploy into VHDX makes it a
 	// standard user, creating it if the image has none.
 	SettingPlayerUser = "player_user"
+	// SettingConfirmSeconds is how long the agent warns before it wipes a disk;
+	// empty means its default.
+	SettingConfirmSeconds = "confirm_seconds"
 )
 
 // Store is an open database.

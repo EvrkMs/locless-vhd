@@ -11,6 +11,9 @@ const TaskKindCheck = "agent"
 // EFI or other system partitions. It needs no image.
 const TaskKindFormat = "format"
 
+// MaxConfirmSeconds limits the warning before a wipe that the panel may set.
+const MaxConfirmSeconds = 300
+
 // FormatLabel is the name of that volume.
 const FormatLabel = "WB"
 
@@ -30,6 +33,9 @@ type AgentTask struct {
 	VHDSize uint64 `json:"vhdSize,omitempty"`
 	// Accounts for TaskKindDeployVHD, from the settings of the panel.
 	Accounts *Accounts `json:"accounts,omitempty"`
+	// ConfirmSeconds is how long the agent warns before it wipes the disk; 0 does
+	// not wait at all. Absent means the agent's own default.
+	ConfirmSeconds *int `json:"confirmSeconds,omitempty"`
 	// Table is the partition table saved before a shrink that was never undone, for
 	// example because the PC lost power in the middle of a clone.
 	Table []byte `json:"table,omitempty"`

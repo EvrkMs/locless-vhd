@@ -79,6 +79,7 @@ type worker struct {
 	attempts   int                                  // tries of the task since this boot, for the metrics
 	shrinkSaid string                               // the last word of Shrink about the volume, for the metrics
 	startup    startTimes                           // how long this attempt took to reach the server
+	confirm    int                                  // seconds of warning before a wipe, from the task
 }
 
 // startTimes is the way of an attempt to the server, for the metrics of its task.
@@ -160,6 +161,7 @@ func (w *worker) attempt() error {
 	}
 	w.screen.log(fmt.Sprintf("сервер: задача %d", task.ID))
 	w.taskID = task.ID
+	w.confirm = confirmFor(task)
 
 	if task.Kind == proto.TaskKindDeploy {
 		return w.runDeploy(task)

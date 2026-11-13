@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"locless-vhd/proto"
@@ -42,11 +43,22 @@ func (h *server) settings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	confirm, err := h.store.Setting(r.Context(), store.SettingConfirmSeconds)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if confirm == "" {
+		confirm = strconv.Itoa(defaultConfirmSeconds)
+	}
 	// The password itself never leaves the server through the panel: only whether it is set.
-	writeJSON(w, http.StatusOK, map[string]any{"imageDir": dir, "exitMode": mode, "root": h.root,
+	writeJSON(w, http.StatusOK, map[string]any{"confirmSeconds": confirm, "imageDir": dir, "exitMode": mode, "root": h.root,
 		"clientAddr": addr, "addresses": h.addresses(), "bind": h.cfg.Bind,
 		"playerUser": player, "adminPasswordSet": password != ""})
 }
+
+// defaultConfirmSeconds is what the agent waits when the panel sets nothing.
+const defaultConfirmSeconds = 20
 
 // maxPassword is the longest password Windows takes for a local account.
 const maxPassword = 127
@@ -60,7 +72,10 @@ func (h *server) addresses() []string {
 
 // saveSettings stores the fields present in the request.
 func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
-	var in struct{ ImageDir, ExitMode, ClientAddr, PlayerUser, AdminPassword *string }
+	var in struct {
+		ImageDir, ExitMode, ClientAddr, PlayerUser, AdminPassword *string
+		ConfirmSeconds                                            *int
+	}
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -91,6 +106,18 @@ func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("exit mode changed", "mode", *in.ExitMode)
+	}
+	if in.ConfirmSeconds != nil {
+		n := *in.ConfirmSeconds
+		if n < 0 || n > proto.MaxConfirmSeconds {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Отсчёт от 0 до %d секунд", proto.MaxConfirmSeconds))
+			return
+		}
+		if err := h.store.SetSetting(r.Context(), store.SettingConfirmSeconds, strconv.Itoa(n)); err != nil {
+			h.fail(w, err)
+			return
+		}
+		h.log.Info("wipe warning changed", "seconds", n)
 	}
 	if in.PlayerUser != nil {
 		name := strings.TrimSpace(*in.PlayerUser)

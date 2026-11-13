@@ -34,6 +34,8 @@ const (
 	TaskFormat = proto.TaskKindFormat
 	// TaskPrepare wipes the disk of the PC into EFI, MSR and the store for virtual disks.
 	TaskPrepare = proto.TaskKindPrepare
+	// TaskDeployVHD writes an image into a virtual disk on the store of the PC.
+	TaskDeployVHD = proto.TaskKindDeployVHD
 )
 
 // Task statuses.
@@ -108,6 +110,8 @@ var migrations = []string{`
 	UPDATE image_versions SET parent = number - 1;
 `, `
 	ALTER TABLE tasks ADD COLUMN metrics TEXT NOT NULL DEFAULT '';
+`, `
+	ALTER TABLE images ADD COLUMN vhd_size INTEGER NOT NULL DEFAULT 68719476736;
 `}
 
 // Setting keys.

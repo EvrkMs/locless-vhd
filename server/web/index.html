@@ -286,7 +286,7 @@ function formatSize(n) {
   return Math.max(1, Math.round(n / 2 ** 20)) + ' МБ';
 }
 
-const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', format: 'Форматирование', prepare: 'Подготовка диска' };
+const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', deployvhd: 'Развёртывание в VHDX', format: 'Форматирование', prepare: 'Подготовка диска' };
 const stateText = { queued: 'Ждёт загрузки ПК', started: 'Загружается WinPE', running: 'Выполняется', done: 'Готово', failed: 'Ошибка', cancelled: 'Отменена' };
 const stuck = t => !t.finishedAt && t.stage === 'Ошибка'; // the agent waits on its error screen
 
@@ -434,6 +434,10 @@ function hostActions(h) {
     {
       text: 'Развернуть', why: noImage || (hasVersions ? '' : 'в образе ещё нет версий'),
       confirm: `Стереть диск ${h.name}?`, run: () => post('deploy'),
+    },
+    {
+      text: 'Развернуть в VHDX', why: noImage || (hasVersions ? '' : 'в образе ещё нет версий'),
+      confirm: `Заменить Windows на ${h.name} образом в VHDX? Без хранилища LVHD диск будет стёрт.`, run: () => post('deployvhd'),
     },
     { text: 'Проверить связь', run: () => post('agent') },
     { text: 'Форматировать в том WB', danger: true, confirm: `Стереть диск ${h.name}?`, run: () => post('format') },
@@ -660,7 +664,13 @@ function imageActions(image) {
   const locked = image.merging ? 'идёт слияние' : image.busy ? 'образ используется задачей' : '';
   const older = active.filter(v => v !== current);
   const leaves = image.versions.filter(v => !image.versions.some(o => o.parent === v.number));
-  const items = [];
+  const items = [{
+    text: `Размер VHDX: ${formatSize(image.vhdSize)}…`,
+    run: () => {
+      const answer = prompt('Размер виртуального диска в ГБ. Новый размер получат ПК при следующем развёртывании в VHDX.', Math.round(image.vhdSize / 2 ** 30));
+      if (answer !== null) act('PUT', path + '/vhd', { GiB: Number(answer) });
+    },
+  }, null];
   if (older.length) {
     for (const v of older) {
       items.push({ text: 'Откатить к ' + v.file, why: locked, confirm: `Деплой пойдёт с ${v.file}. Откатить?`, run: () => act('POST', `${path}/versions/${v.number}/restore`) });
@@ -693,6 +703,7 @@ function imageRows(images) {
     const title = el('td', { textContent: image.name, title: image.path, className: image.missing || image.offline ? 'lost' : '' });
     if (image.missing) title.append(el('div', { className: 'sub lost', textContent: 'Файлы не найдены' }));
     if (image.offline) title.append(el('div', { className: 'sub lost', textContent: 'Папка недоступна' }));
+    title.append(el('div', { className: 'sub', textContent: 'VHDX ' + formatSize(image.vhdSize) }));
     if (image.merging) title.append(el('div', { className: 'chip started', textContent: 'Идёт слияние' }));
     if (image.mergeError) title.append(el('div', { className: 'sub lost', textContent: 'Слияние не удалось: ' + image.mergeError }));
     const menu = button('Действия ▾', '', () => openMenu(menu, imageActions(image)));

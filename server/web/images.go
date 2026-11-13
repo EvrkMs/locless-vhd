@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -188,6 +189,20 @@ func (h *server) imageBusy(w http.ResponseWriter, r *http.Request, name string) 
 		return true
 	}
 	return false
+}
+
+// setImageVHDSize sets the size of the virtual disk a deploy into VHDX makes, in
+// whole gibibytes.
+func (h *server) setImageVHDSize(w http.ResponseWriter, r *http.Request) {
+	var in struct{ GiB uint64 }
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.GiB < store.MinVHDSize>>30 || in.GiB > store.MaxVHDSize>>30 { // before the shift can overflow
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Р Р°Р·РјРµСЂ VHDX РѕС‚ %d РґРѕ %d Р“Р‘", store.MinVHDSize>>30, store.MaxVHDSize>>30))
+		return
+	}
+	h.done(w, h.store.SetImageVHDSize(r.Context(), r.PathValue("name"), in.GiB<<30))
 }
 
 // setHostImage links a PC to an image, or clears the link.

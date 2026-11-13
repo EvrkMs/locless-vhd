@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"locless-vhd/proto"
@@ -36,10 +37,10 @@ type CloneManager interface {
 	ResetStats(task int64)
 }
 
-// ownTask checks that the sender owns this active task of the given kind. A
+// ownTask checks that the sender owns this active task of one of the given kinds. A
 // request that fails the check changes nothing, unless the task is over for
 // everyone: then what it left on the server is dropped, whoever asked.
-func ownTask(w http.ResponseWriter, r *http.Request, c Config, kind string) (*store.Task, net.HardwareAddr, bool) {
+func ownTask(w http.ResponseWriter, r *http.Request, c Config, kinds ...string) (*store.Task, net.HardwareAddr, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad task id", http.StatusBadRequest)
@@ -54,7 +55,7 @@ func ownTask(w http.ResponseWriter, r *http.Request, c Config, kind string) (*st
 		internalError(w, c, err)
 		return nil, nil, false
 	}
-	if task == nil || task.ID != id || task.Kind != kind {
+	if task == nil || task.ID != id || !slices.Contains(kinds, task.Kind) {
 		open, err := c.Agent.TaskOpen(r.Context(), id)
 		if err != nil {
 			internalError(w, c, err)

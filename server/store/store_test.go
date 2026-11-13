@@ -427,3 +427,29 @@ func TestOldImagesGetTheirPath(t *testing.T) {
 		t.Fatalf("ImagePath = %q, %v", got, err)
 	}
 }
+
+func TestImageVHDSize(t *testing.T) {
+	s := open(t)
+	if err := s.CreateImage(ctx, "win11", `D:\img\win11`); err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+	if size, err := s.ImageVHDSize(ctx, "win11"); err != nil || size != DefaultVHDSize {
+		t.Fatalf("default: %d, %v", size, err)
+	}
+	if err := s.SetImageVHDSize(ctx, "win11", 80<<30); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	images, _ := s.Images(ctx)
+	if len(images) != 1 || images[0].VHDSize != 80<<30 {
+		t.Fatalf("images: %+v", images)
+	}
+	if err := s.SetImageVHDSize(ctx, "win11", 8<<30); !errors.Is(err, ErrBadVHDSize) {
+		t.Fatalf("too small: %v", err)
+	}
+	if err := s.SetImageVHDSize(ctx, "nope", 80<<30); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing image: %v", err)
+	}
+	if _, err := s.ImageVHDSize(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing image: %v", err)
+	}
+}

@@ -639,3 +639,67 @@ func TestEscapeStopsThePrepare(t *testing.T) {
 		t.Fatal("the disk was laid out after Esc")
 	}
 }
+
+// fakeVHD is a deploy into VHDX: the same writes, then Boot.
+type fakeVHD struct {
+	*fakeTarget
+	state   *proto.StoreState
+	bootErr error
+}
+
+func (v *fakeVHD) Boot(state proto.StoreState) error {
+	if v.name == "" {
+		return errors.New("boot before the name was written into the base")
+	}
+	v.state = &state
+	return v.bootErr
+}
+
+func (e *cloneEnv) deployVHD(t *testing.T, v *fakeVHD) (*worker, uint64, error) {
+	t.Helper()
+	if _, err := e.s.CreateTask(context.Background(), e.host.ID, store.TaskDeployVHD, "win11"); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	w, _ := testWorker(e.url)
+	var size uint64
+	w.openVHD = func(s uint64) (vhdTarget, error) { size = s; return v, nil }
+	return w, size, w.attempt()
+}
+
+// TestDeployVHDWritesTheBaseAndBoots: the image goes through the same writes, the
+// size comes from the image, and the boot entry is made last.
+func TestDeployVHDWritesTheBaseAndBoots(t *testing.T) {
+	e := newCloneEnv(t)
+	v1 := map[uint32][]byte{0: fill(1, testBlock), 7: fill(7, testBlock)}
+	e.run(t, &fakeDisk{blocks: v1, size: 10 * testBlock})
+
+	v := &fakeVHD{fakeTarget: &fakeTarget{blocks: map[uint64][]byte{}}}
+	w, size, err := e.deployVHD(t, v)
+	if err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if size != store.DefaultVHDSize {
+		t.Fatalf("size %d, want the default of the image", size)
+	}
+	if v.state == nil || v.state.Image != "win11" || v.state.Version != 1 || v.state.VHDSize != size {
+		t.Fatalf("state: %+v", v.state)
+	}
+	if !bytes.Equal(v.blocks[7*testBlock], v1[7]) || !v.grown || v.name != "PC-12" {
+		t.Fatalf("target: %+v", v.fakeTarget)
+	}
+	if st := w.screen.snapshot(); st.Title != "Готово" {
+		t.Fatalf("screen: %+v", st)
+	}
+}
+
+// TestDeployVHDFailsWithoutBoot: without the differencing disk the PC has nothing
+// to boot, so the task must not look done.
+func TestDeployVHDFailsWithoutBoot(t *testing.T) {
+	e := newCloneEnv(t)
+	e.run(t, &fakeDisk{blocks: map[uint32][]byte{0: fill(1, testBlock)}, size: 4 * testBlock})
+
+	v := &fakeVHD{fakeTarget: &fakeTarget{blocks: map[uint64][]byte{}}, bootErr: errors.New("bcdboot failed")}
+	if _, _, err := e.deployVHD(t, v); err == nil || !strings.Contains(err.Error(), "bcdboot failed") {
+		t.Fatalf("attempt: %v", err)
+	}
+}

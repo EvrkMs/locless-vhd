@@ -105,19 +105,69 @@ func gptArea(size uint64, sector uint32) (uint64, uint64) {
 	return first, size - entries - uint64(sector)
 }
 
+// vhdTarget is a target that writes the image into a virtual disk on the store.
+type vhdTarget interface {
+	target
+	// Boot puts the differencing disk on top of the written base, makes Windows
+	// boot from it and records state on the store. It runs after SetName.
+	Boot(state proto.StoreState) error
+}
+
+// fitFresh plans the table of the image on a new virtual disk of size bytes.
+func fitFresh(m proto.Manifest, size uint64) (proto.Manifest, error) {
+	if m.SectorSize != 512 && m.SectorSize != 4096 {
+		return proto.Manifest{}, fmt.Errorf("сектор образа %d байт, VHDX умеет 512 и 4096", m.SectorSize)
+	}
+	first, end := gptArea(size, m.SectorSize)
+	fitted, err := m.Fit(first, end)
+	var small *proto.TooSmallError
+	if errors.As(err, &small) {
+		return proto.Manifest{}, fmt.Errorf("образу нужно %s, а VHDX %s: увеличьте размер VHDX у образа",
+			formatBytes(small.Need), formatBytes(size))
+	}
+	if err != nil {
+		return proto.Manifest{}, err
+	}
+	fitted.DiskSize = size
+	return fitted, nil
+}
+
 // runDeploy writes the image over the disk.
 func (w *worker) runDeploy(task *proto.AgentTask) error {
+	return w.deployInto(task, "Развёртывание образа", w.openTarget, nil)
+}
+
+// runDeployVHD writes the image into base.vhdx on the store of the PC.
+func (w *worker) runDeployVHD(task *proto.AgentTask) error {
+	if task.VHDSize == 0 {
+		return errors.New("сервер не прислал размер VHDX")
+	}
+	var vt vhdTarget
+	open := func() (target, error) {
+		var err error
+		vt, err = w.openVHD(task.VHDSize)
+		return vt, err
+	}
+	boot := func(info proto.DeployInfo) error {
+		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: task.VHDSize, Written: time.Now()})
+	}
+	return w.deployInto(task, "Развёртывание в VHDX", open, boot)
+}
+
+// deployInto writes the image into what open gives. boot, if set, runs last and
+// its failure fails the deploy.
+func (w *worker) deployInto(task *proto.AgentTask, title string, open func() (target, error), boot func(proto.DeployInfo) error) error {
 	w.names = deployStages
 	w.setStage(stageCheck)
 	w.screen.update(func(st *ui.State) {
 		st.Phase, st.Percent = ui.PhaseDeploy, 0
 		st.Center, st.Caption = "0%", "подготовка"
-		st.Title, st.Detail = "Развёртывание образа", "Образ "+task.Image
+		st.Title, st.Detail = title, "Образ "+task.Image
 	})
 	w.rec = newRecorder(w.attempts)
 	w.rec.Step("Открытие диска")
 
-	dst, err := w.openTarget()
+	dst, err := open()
 	if err != nil {
 		return fmt.Errorf("не удалось открыть диск: %w", err)
 	}
@@ -198,6 +248,12 @@ func (w *worker) runDeploy(task *proto.AgentTask) error {
 	}
 	w.rec.Step("Имя ПК")
 	named := w.nameWindows(dst)
+	if boot != nil {
+		w.rec.Step("Разностный диск и загрузка")
+		if err := boot(info); err != nil {
+			return fmt.Errorf("образ записан, но загрузка с VHDX не настроена: %w", err)
+		}
+	}
 	w.rec.Step("Отчёт серверу")
 	message := fmt.Sprintf("%s v%d, записано %s за %s, %s", task.Image, info.Version, formatBytes(d.written),
 		formatDuration(writing), named)

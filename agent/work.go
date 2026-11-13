@@ -58,19 +58,20 @@ type worker struct {
 	cfg        proto.AgentConfig
 	client     *client
 	screen     *screen
-	localIP    func() string          // the address of this PC, "" if there is none
-	sleep      func(time.Duration)    // replaced in tests
-	reboot     func()                 // ends the session
-	retry      chan struct{}          // the operator pressed R
-	openDisk   func() (source, error) // the disk to clone
-	openTarget func() (target, error) // the disk to overwrite
-	abort      chan struct{}          // the operator pressed Esc before a deploy
-	names      []string               // stages of the current task
-	taskID     int64                  // the task being worked on, 0 before the server named one
-	failed     atomic.Bool            // the error screen is up, so a reboot cannot break anything
-	rec        *recorder              // metrics of the clone or deploy running now, nil otherwise
-	attempts   int                    // tries of the task since this boot, for the metrics
-	shrinkSaid string                 // the last word of Shrink about the volume, for the metrics
+	localIP    func() string                        // the address of this PC, "" if there is none
+	sleep      func(time.Duration)                  // replaced in tests
+	reboot     func()                               // ends the session
+	retry      chan struct{}                        // the operator pressed R
+	openDisk   func() (source, error)               // the disk to clone
+	openTarget func() (target, error)               // the disk to overwrite
+	openVHD    func(size uint64) (vhdTarget, error) // a virtual disk of that size on the store
+	abort      chan struct{}                        // the operator pressed Esc before a deploy
+	names      []string                             // stages of the current task
+	taskID     int64                                // the task being worked on, 0 before the server named one
+	failed     atomic.Bool                          // the error screen is up, so a reboot cannot break anything
+	rec        *recorder                            // metrics of the clone or deploy running now, nil otherwise
+	attempts   int                                  // tries of the task since this boot, for the metrics
+	shrinkSaid string                               // the last word of Shrink about the volume, for the metrics
 }
 
 // Stages of the link check, in order.
@@ -138,6 +139,9 @@ func (w *worker) attempt() error {
 	}
 	if task.Kind == proto.TaskKindFormat {
 		return w.runWipe(task, formatJob)
+	}
+	if task.Kind == proto.TaskKindDeployVHD {
+		return w.runDeployVHD(task)
 	}
 	if task.Kind == proto.TaskKindPrepare {
 		return w.runWipe(task, prepareJob)

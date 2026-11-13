@@ -34,6 +34,7 @@ type AgentStore interface {
 	FinishTask(ctx context.Context, mac net.HardwareAddr, id int64, ok bool, message string) error
 	SaveMetrics(ctx context.Context, mac net.HardwareAddr, id int64, metrics string) error
 	TaskInfo(ctx context.Context, id int64) (store.HostTask, error)
+	ImageVHDSize(ctx context.Context, image string) (uint64, error)
 }
 
 // addAgentRoutes registers what the agent talks to.
@@ -80,7 +81,14 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 			internalError(w, c, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, proto.AgentTask{ID: task.ID, Kind: task.Kind, Image: task.Image, Table: table})
+		out := proto.AgentTask{ID: task.ID, Kind: task.Kind, Image: task.Image, Table: table}
+		if task.Kind == store.TaskDeployVHD {
+			if out.VHDSize, err = c.Agent.ImageVHDSize(r.Context(), task.Image); err != nil {
+				internalError(w, c, err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 
 	// The partition table of a PC, saved before its volume is shrunk and removed,

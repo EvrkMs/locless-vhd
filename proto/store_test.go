@@ -72,3 +72,10 @@ func TestIsStoreLayout(t *testing.T) {
 		t.Error("a foreign table taken for a store")
 	}
 }
+
+func TestStoreNeed(t *testing.T) {
+	const gib = 1 << 30
+	if got := StoreNeed(64*gib, 16*gib); got != (2*64+16+4)*gib {
+		t.Fatalf("StoreNeed: %d GiB", got/gib)
+	}
+}

@@ -368,6 +368,20 @@ func TestTasksUseTheImageOfThePC(t *testing.T) {
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"deploy"}`); w.Code != http.StatusConflict {
 		t.Fatalf("deploy of an empty image: %d %s", w.Code, w.Body)
 	}
+	if w := do(h, http.MethodPost, path+"/task", `{"kind":"deployvhd"}`); w.Code != http.StatusConflict {
+		t.Fatalf("deploy into VHDX of an empty image: %d %s", w.Code, w.Body)
+	}
+	for body, want := range map[string]int{`{"GiB":80}`: http.StatusNoContent, `{"GiB":8}`: http.StatusBadRequest, `{"GiB":18446744073709551615}`: http.StatusBadRequest} {
+		if w := do(h, http.MethodPut, "/api/images/win11/vhd", body); w.Code != want {
+			t.Fatalf("vhd size %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if size, _ := s.ImageVHDSize(ctx, "win11"); size != 80<<30 {
+		t.Fatalf("vhd size %d", size)
+	}
+	if w := do(h, http.MethodPut, "/api/images/nope/vhd", `{"GiB":80}`); w.Code != http.StatusNotFound {
+		t.Fatalf("vhd size of a missing image: %d", w.Code)
+	}
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"wipe"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown kind: %d", w.Code)
 	}

@@ -22,7 +22,7 @@ type DeployManager interface {
 // addDeployRoutes registers the endpoints a deploy goes through.
 func addDeployRoutes(mux *http.ServeMux, c Config) {
 	deployTask := func(w http.ResponseWriter, r *http.Request) (*store.Task, bool) {
-		task, _, ok := ownTask(w, r, c, store.TaskDeploy)
+		task, _, ok := ownTask(w, r, c, store.TaskDeploy, store.TaskDeployVHD)
 		return task, ok
 	}
 	fail := func(w http.ResponseWriter, err error) {

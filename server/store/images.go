@@ -24,7 +24,8 @@ type Version struct {
 type Image struct {
 	ID       int64     `json:"id"`
 	Name     string    `json:"name"`
-	Path     string    `json:"path"` // full path of its folder, fixed when it was created
+	Path     string    `json:"path"`    // full path of its folder, fixed when it was created
+	VHDSize  uint64    `json:"vhdSize"` // the virtual disk a deploy into VHDX makes, in bytes
 	Versions []Version `json:"versions"`
 	Busy     int       `json:"busy"`    // unfinished tasks using the image
 	Missing  bool      `json:"missing"` // its folder or a version file is gone
@@ -54,6 +55,44 @@ func (s *Store) CreateImage(ctx context.Context, name, path string) error {
 		return ErrImageExists
 	}
 	return nil
+}
+
+// Limits of the virtual disk of an image. Below the minimum Windows does not fit;
+// the maximum is far above any disk of the club and well inside what VHDX allows.
+const (
+	MinVHDSize     uint64 = 16 << 30
+	MaxVHDSize     uint64 = 16 << 40
+	DefaultVHDSize uint64 = 64 << 30 // what migration 9 gives every image
+)
+
+// ErrBadVHDSize means a virtual disk size outside MinVHDSize..MaxVHDSize.
+var ErrBadVHDSize = errors.New("store: virtual disk size out of range")
+
+// ImageVHDSize returns the size of the virtual disk a deploy into VHDX makes.
+func (s *Store) ImageVHDSize(ctx context.Context, name string) (uint64, error) {
+	var size uint64
+	err := s.db.QueryRowContext(ctx, "SELECT vhd_size FROM images WHERE name = ?", name).Scan(&size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return size, err
+}
+
+// SetImageVHDSize changes that size. Virtual disks already deployed keep theirs
+// until the next deploy into VHDX.
+func (s *Store) SetImageVHDSize(ctx context.Context, name string, size uint64) error {
+	if size < MinVHDSize || size > MaxVHDSize {
+		return ErrBadVHDSize
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE images SET vhd_size = ? WHERE name = ?", size, name)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n == 0 {
+		err = ErrNotFound
+	}
+	return err
 }
 
 // ImagePath returns the folder of an image. An image not created yet would go
@@ -309,7 +348,7 @@ func (s *Store) AddVersion(ctx context.Context, image string, v Version) error {
 // Images lists images by name with their versions.
 func (s *Store) Images(ctx context.Context) ([]Image, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, i.name, i.path, v.number, v.file, v.size, v.source_mac, v.created_at, v.parent, v.disabled
+		SELECT i.id, i.name, i.path, i.vhd_size, v.number, v.file, v.size, v.source_mac, v.created_at, v.parent, v.disabled
 		FROM images i LEFT JOIN image_versions v ON v.image_id = i.id
 		ORDER BY i.name COLLATE NOCASE, v.number`)
 	if err != nil {
@@ -321,14 +360,15 @@ func (s *Store) Images(ctx context.Context) ([]Image, error) {
 	for rows.Next() {
 		var id int64
 		var name, path string
+		var vhdSize uint64
 		var number, size, created, parent sql.NullInt64
 		var disabled sql.NullBool
 		var file, mac sql.NullString
-		if err := rows.Scan(&id, &name, &path, &number, &file, &size, &mac, &created, &parent, &disabled); err != nil {
+		if err := rows.Scan(&id, &name, &path, &vhdSize, &number, &file, &size, &mac, &created, &parent, &disabled); err != nil {
 			return nil, err
 		}
 		if len(images) == 0 || images[len(images)-1].ID != id {
-			images = append(images, Image{ID: id, Name: name, Path: path, Versions: []Version{}})
+			images = append(images, Image{ID: id, Name: name, Path: path, VHDSize: vhdSize, Versions: []Version{}})
 		}
 		if number.Valid {
 			last := &images[len(images)-1]

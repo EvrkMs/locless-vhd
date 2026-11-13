@@ -194,6 +194,7 @@ type tableEntry struct {
 	start, size uint64
 	typeGUID    string
 	guid        string
+	name        string // GPT name
 }
 
 // parseLayout reads a DRIVE_LAYOUT_INFORMATION_EX, which may have come from the
@@ -216,7 +217,7 @@ func parseLayout(b []byte) (uint32, []tableEntry, error) {
 		}
 		entries = append(entries, tableEntry{
 			number: number, start: binary.LittleEndian.Uint64(e[8:]), size: size,
-			typeGUID: formatGUID(e[32:48]), guid: formatGUID(e[48:64]),
+			typeGUID: formatGUID(e[32:48]), guid: formatGUID(e[48:64]), name: utf16Name(e[72:144]),
 		})
 	}
 	return binary.LittleEndian.Uint32(b[0:]), entries, nil

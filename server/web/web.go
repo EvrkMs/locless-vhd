@@ -50,6 +50,7 @@ type Store interface {
 	ImagePath(context.Context, string) (string, error)
 	DeleteImage(context.Context, string) error
 	SetHostImage(context.Context, int64, string) error
+	SetImageVHDSize(ctx context.Context, image string, size uint64) error
 	HostImage(context.Context, int64) (string, error)
 	AllVersions(context.Context, string) ([]store.Version, error)
 	DeleteVersion(context.Context, string, int) error
@@ -138,6 +139,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("POST /api/images/{name}/versions/{number}/restore", h.restoreVersion)
 	mux.HandleFunc("POST /api/images/{name}/versions/{number}/enable", h.enableVersion)
 	mux.HandleFunc("POST /api/images/{name}/merge", h.mergeImage)
+	mux.HandleFunc("PUT /api/images/{name}/vhd", h.setImageVHDSize)
 	mux.HandleFunc("PUT /api/hosts/{id}/image", h.setHostImage)
 	return guard(c.Addr, mux)
 }
@@ -291,12 +293,12 @@ func (h *server) createTask(w http.ResponseWriter, r *http.Request) {
 	switch in.Kind {
 	case store.TaskAgent, store.TaskFormat, store.TaskPrepare:
 		image = ""
-	case store.TaskClone, store.TaskDeploy:
+	case store.TaskClone, store.TaskDeploy, store.TaskDeployVHD:
 		if image == "" {
 			writeError(w, http.StatusConflict, "Сначала выберите образ у компьютера")
 			return
 		}
-		if !h.imageReady(w, r, image, in.Kind == store.TaskDeploy) {
+		if !h.imageReady(w, r, image, in.Kind != store.TaskClone) {
 			return
 		}
 	default:

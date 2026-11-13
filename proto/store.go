@@ -3,12 +3,18 @@ package proto
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // TaskKindPrepare wipes the disk and lays it out for Windows booted from a
 // virtual disk: EFI, MSR and one hidden NTFS store for the virtual disk files.
 // It needs no image.
 const TaskKindPrepare = "prepare"
+
+// TaskKindDeployVHD writes an image into a new virtual disk on the store, lays
+// the store out first if the disk has none, and makes Windows boot from a
+// differencing disk on top of it.
+const TaskKindDeployVHD = "deployvhd"
 
 // The layout of a prepared disk.
 const (
@@ -102,4 +108,36 @@ func lower(c byte) byte {
 
 func alignUp(n, to uint64) uint64 {
 	return (n + to - 1) / to * to
+}
+
+// Files on the store.
+const (
+	BaseFile  = "base.vhdx"    // the image, written by a deploy into VHDX
+	DiffFile  = "diff-a.avhdx" // the differencing disk Windows boots from
+	StateFile = "locless-vhd.json"
+)
+
+// StoreSpare is room on the store beyond the memory of the PC, for the files
+// Windows keeps there when it boots from a virtual disk.
+const StoreSpare = 4 << 30
+
+// StoreNeed returns the size of store a deploy into VHDX needs. Until it is
+// measured how far Windows grows the files when it boots from them, the base and
+// the differencing disk are each counted at the full virtual size. The page file
+// and memory dumps of that Windows live on the store too, so the memory of the
+// PC is added.
+func StoreNeed(vhdSize, memory uint64) uint64 {
+	return 2*vhdSize + memory + StoreSpare
+}
+
+// StoreState is the state file on the store: what the base holds, so the server
+// can tell which version a PC has.
+type StoreState struct {
+	Image   string    `json:"image"`
+	Version int       `json:"version"`
+	Format  string    `json:"format"` // "vhdx"
+	VHDSize uint64    `json:"vhdSize"`
+	Base    string    `json:"base"`
+	Diff    string    `json:"diff"`
+	Written time.Time `json:"written"`
 }

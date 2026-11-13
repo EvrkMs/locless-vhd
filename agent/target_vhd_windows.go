@@ -227,9 +227,13 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if err := d.mountWindows(); err != nil {
 		return err
 	}
+	// The EFI partition is formatted first. A deploy onto a disk that already has
+	// the store keeps the partitions, and bcdboot adds to the boot configuration it
+	// finds: entries of earlier deploys stayed in the boot menu, pointing at files
+	// that are gone, and the PC could boot one of them.
 	if err := runDiskpart(fmt.Sprintf("select disk %d", d.phys.number), "rescan",
-		"select partition 1", "assign letter="+espLetter+" noerr"); err != nil {
-		return err
+		"select partition 1", "format fs=fat32 quick label=System", "assign letter="+espLetter+" noerr"); err != nil {
+		return fmt.Errorf("раздел EFI: %w", err)
 	}
 	out, err := exec.Command("bcdboot", windowsLetter+`:\Windows`, "/s", espLetter+":", "/f", "UEFI").CombinedOutput()
 	if err != nil {

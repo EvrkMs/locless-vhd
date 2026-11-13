@@ -114,8 +114,18 @@ func alignUp(n, to uint64) uint64 {
 const (
 	BaseFile  = "base.vhdx"    // the image, written by a deploy into VHDX
 	DiffFile  = "diff-a.avhdx" // the differencing disk Windows boots from
+	DiffFileB = "diff-b.avhdx" // its pair: the reset prepares one while Windows runs on the other
 	StateFile = "locless-vhd.json"
+	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
 )
+
+// OtherDiff returns the differencing disk paired with name.
+func OtherDiff(name string) string {
+	if name == DiffFileB {
+		return DiffFile
+	}
+	return DiffFileB
+}
 
 // StoreSpare is room on the store beyond the memory of the PC, for the files
 // Windows keeps there when it boots from a virtual disk.

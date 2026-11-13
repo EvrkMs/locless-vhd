@@ -29,12 +29,22 @@ func init() {
 	runtime.LockOSThread()
 }
 
+// resetFlag starts the agent as the reset service of a Windows booted from VHDX.
+const resetFlag = "-reset"
+
 const (
 	keyEscape     = 0x1b
 	keyCtrlAltDel = -1 // reported by the window, if the system lets the keys through at all
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == resetFlag {
+		if err := runReset(); err != nil {
+			fmt.Fprintln(os.Stderr, "reset:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, err := loadConfig()
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

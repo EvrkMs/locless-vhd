@@ -94,7 +94,7 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	if err := mountStore(d.phys.number); err != nil {
 		return err
 	}
-	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.BaseFile} {
+	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.DiffFileB, proto.BaseFile} {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("старый файл %s: %w", name, err)
 		}
@@ -180,6 +180,9 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return errors.New("загрузочная запись VHDX работает только в WinPE")
 	}
+	if err := d.installReset(); err != nil {
+		return fmt.Errorf("служба сброса: %w", err)
+	}
 	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.BaseFile), 0, 0); err != nil {
 		return err
 	}
@@ -204,6 +207,63 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 		return err
 	}
 	return os.WriteFile(storePath(proto.StateFile), b, 0o644)
+}
+
+// installReset puts the agent into the base as the reset service, so every
+// differencing disk made from the base has it.
+func (d *vhdDisk) installReset() (err error) {
+	if err := d.attach(proto.BaseFile); err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.mountWindows(); err != nil {
+		return err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := copyFile(self, windowsLetter+`:\Windows\System32\`+resetExe); err != nil {
+		return err
+	}
+	const hive = `HKLM\LOCLESS`
+	if err := runReg("load", hive, windowsLetter+`:\Windows\System32\config\SYSTEM`); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, runReg("unload", hive)) }()
+	out, err := exec.Command("reg", "query", hive+`\Select`, "/v", "Current").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reg query: %w: %s", err, lastLine(out))
+	}
+	set, err := controlSet(string(out))
+	if err != nil {
+		return err
+	}
+	key := hive + `\` + set + `\Services\` + resetServiceName
+	for _, v := range [][3]string{
+		{"Type", "REG_DWORD", "16"},        // a service in its own process
+		{"Start", "REG_DWORD", "2"},        // automatic
+		{"ErrorControl", "REG_DWORD", "1"}, // log and go on booting
+		{"ImagePath", "REG_EXPAND_SZ", `%SystemRoot%\System32\` + resetExe + " " + resetFlag},
+		{"ObjectName", "REG_SZ", "LocalSystem"},
+		{"DisplayName", "REG_SZ", "locless-vhd: сброс разностного диска"},
+	} {
+		if err := runReg("add", key, "/v", v[0], "/t", v[1], "/d", v[2], "/f"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resetExe is the name of the agent inside the deployed Windows.
+const resetExe = "lvhd-reset.exe"
+
+func copyFile(from, to string) error {
+	b, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(to, b, 0o755)
 }
 
 // attach attaches a file of the store; one virtual disk at a time.

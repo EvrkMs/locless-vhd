@@ -112,8 +112,9 @@ func alignUp(n, to uint64) uint64 {
 
 // Files on the store.
 const (
-	BaseFile  = "base.vhdx"    // the image, written by a deploy into VHDX
-	DiffFile  = "diff-a.avhdx" // the differencing disk Windows boots from
+	BaseFile  = "base.vhdx"    // the image, block for block as on the server
+	LocalFile = "local.avhdx"  // on top of the base: what belongs to this PC only
+	DiffFile  = "diff-a.avhdx" // on top of local: the differencing disk Windows boots from
 	DiffFileB = "diff-b.avhdx" // its pair: the reset prepares one while Windows runs on the other
 	StateFile = "locless-vhd.json"
 	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
@@ -131,13 +132,17 @@ func OtherDiff(name string) string {
 // Windows keeps there when it boots from a virtual disk.
 const StoreSpare = 4 << 30
 
+// LocalSpare is room for local.avhdx. Only the agent writes into it, a little:
+// the stretched volume and the name and service of the PC.
+const LocalSpare = 1 << 30
+
 // StoreNeed returns the size of store a deploy into VHDX needs. Until it is
 // measured how far Windows grows the files when it boots from them, the base and
 // the differencing disk are each counted at the full virtual size. The page file
 // and memory dumps of that Windows live on the store too, so the memory of the
 // PC is added.
 func StoreNeed(vhdSize, memory uint64) uint64 {
-	return 2*vhdSize + memory + StoreSpare
+	return 2*vhdSize + memory + StoreSpare + LocalSpare
 }
 
 // StoreState is the state file on the store: what the base holds, so the server
@@ -148,6 +153,7 @@ type StoreState struct {
 	Format  string    `json:"format"` // "vhdx"
 	VHDSize uint64    `json:"vhdSize"`
 	Base    string    `json:"base"`
+	Local   string    `json:"local,omitempty"` // the parent of the differencing disks; "" means the base
 	Diff    string    `json:"diff"`
 	Written time.Time `json:"written"`
 }

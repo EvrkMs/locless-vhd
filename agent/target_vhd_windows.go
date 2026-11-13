@@ -99,7 +99,7 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	if err := protectStore(storeLetter + `:\`); err != nil {
 		return fmt.Errorf("права на хранилище: %w", err)
 	}
-	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.DiffFileB, proto.BaseFile} {
+	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.DiffFileB, proto.LocalFile, proto.BaseFile} {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("старый файл %s: %w", name, err)
 		}
@@ -145,9 +145,14 @@ func (d *vhdDisk) Close() error {
 	return errors.Join(errs...)
 }
 
-// Grow stretches the Windows volume inside the base over its partition.
+// Grow stretches the Windows volume over its partition. It writes into local, so
+// the base stays block for block the image on the server, and an update can
+// write into it only the blocks that differ between versions.
 func (d *vhdDisk) Grow(m proto.Manifest) error {
-	if err := d.attach(proto.BaseFile); err != nil {
+	if err := d.ensureLocal(); err != nil {
+		return err
+	}
+	if err := d.attach(proto.LocalFile); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -155,20 +160,23 @@ func (d *vhdDisk) Grow(m proto.Manifest) error {
 }
 
 // MakeBootable has nothing to do yet: the boot entry must point at the
-// differencing disk, which Boot makes after the name is in the base.
+// differencing disk, which Boot makes after the name is in local.
 func (d *vhdDisk) MakeBootable(proto.Manifest) error { return nil }
 
 // Format and MakeStore belong to the tasks that wipe the physical disk.
 func (d *vhdDisk) Format(string) error { return errors.New("не для VHDX") }
 func (d *vhdDisk) MakeStore() error    { return errors.New("не для VHDX") }
 
-// SetName writes the computer name into the base, so a reset of the differencing
-// disk keeps it.
+// SetName writes the computer name into local: a reset of the differencing disk
+// keeps it, and the base stays the same on every PC.
 func (d *vhdDisk) SetName(name string) error {
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return nil
 	}
-	if err := d.attach(proto.BaseFile); err != nil {
+	if err := d.ensureLocal(); err != nil {
+		return err
+	}
+	if err := d.attach(proto.LocalFile); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -178,17 +186,20 @@ func (d *vhdDisk) SetName(name string) error {
 	return (&writeDisk{number: d.attached.number}).SetName(name)
 }
 
-// Boot puts the differencing disk on top of the base, adds the Windows on it to
+// Boot puts the differencing disk on top of local, adds the Windows on it to
 // the boot menu of the firmware and writes the state file. Until it is done the
 // PC has no Windows to boot, so unlike MakeBootable a failure fails the deploy.
 func (d *vhdDisk) Boot(state proto.StoreState) error {
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return errors.New("загрузочная запись VHDX работает только в WinPE")
 	}
+	if err := d.ensureLocal(); err != nil {
+		return err
+	}
 	if err := d.installReset(); err != nil {
 		return fmt.Errorf("служба сброса: %w", err)
 	}
-	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.BaseFile), 0, 0); err != nil {
+	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
 		return err
 	}
 	if err := d.attach(proto.DiffFile); err != nil {
@@ -206,7 +217,7 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 	if err != nil {
 		return fmt.Errorf("bcdboot: %w: %s", err, lastLine(out))
 	}
-	state.Base, state.Diff, state.Format = proto.BaseFile, proto.DiffFile, "vhdx"
+	state.Base, state.Local, state.Diff, state.Format = proto.BaseFile, proto.LocalFile, proto.DiffFile, "vhdx"
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -214,10 +225,10 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 	return os.WriteFile(storePath(proto.StateFile), b, 0o644)
 }
 
-// installReset puts the agent into the base as the reset service, so every
-// differencing disk made from the base has it.
+// installReset puts the agent into local as the reset service, so every
+// differencing disk made on top of it has it.
 func (d *vhdDisk) installReset() (err error) {
-	if err := d.attach(proto.BaseFile); err != nil {
+	if err := d.attach(proto.LocalFile); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -269,6 +280,15 @@ func copyFile(from, to string) error {
 		return err
 	}
 	return os.WriteFile(to, b, 0o755)
+}
+
+// ensureLocal makes local.avhdx on top of the base once per deploy: Prepare
+// removed the one of the deploy before.
+func (d *vhdDisk) ensureLocal() error {
+	if _, err := os.Stat(storePath(proto.LocalFile)); err == nil {
+		return nil
+	}
+	return createVirtualDisk(storePath(proto.LocalFile), storePath(proto.BaseFile), 0, 0)
 }
 
 // attach attaches a file of the store; one virtual disk at a time.

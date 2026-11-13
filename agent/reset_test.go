@@ -16,12 +16,13 @@ type fakeStore struct {
 	pointed  string
 	failMake bool
 	steps    []string
+	parents  []string
 }
 
 func newFakeStore(running string, stateDiff string) *fakeStore {
 	return &fakeStore{
-		state:   proto.StoreState{Image: "win11", Version: 3, Base: proto.BaseFile, Diff: stateDiff},
-		files:   map[string]int{proto.BaseFile: 1, proto.DiffFile: 1, proto.DiffFileB: 1},
+		state:   proto.StoreState{Image: "win11", Version: 3, Base: proto.BaseFile, Local: proto.LocalFile, Diff: stateDiff},
+		files:   map[string]int{proto.BaseFile: 1, proto.LocalFile: 1, proto.DiffFile: 1, proto.DiffFileB: 1},
 		running: running, pointed: running,
 	}
 }
@@ -34,7 +35,7 @@ func (s *fakeStore) WriteState(st proto.StoreState) error {
 }
 
 func (s *fakeStore) Remove(name string) error {
-	if name == s.running || name == proto.BaseFile {
+	if name == s.running || name == proto.BaseFile || name == proto.LocalFile {
 		return errInUse
 	}
 	s.steps = append(s.steps, "remove "+name)
@@ -42,7 +43,8 @@ func (s *fakeStore) Remove(name string) error {
 	return nil
 }
 
-func (s *fakeStore) CreateDiff(name string) error {
+func (s *fakeStore) CreateDiff(name, parent string) error {
+	s.parents = append(s.parents, parent)
 	if s.failMake {
 		return errors.New("no space")
 	}
@@ -72,7 +74,7 @@ func TestResetPreparesTheOtherDisk(t *testing.T) {
 		if got := strings.Join(s.steps, ","); got != want {
 			t.Fatalf("%s: steps %s, want %s", running, got, want)
 		}
-		if s.files[next] != 2 || s.files[running] != 1 || !strings.Contains(said, next) {
+		if s.files[next] != 2 || s.files[running] != 1 || !strings.Contains(said, next) || s.parents[0] != proto.LocalFile {
 			t.Fatalf("%s: files %v, said %q", running, s.files, said)
 		}
 	}
@@ -107,5 +109,17 @@ func TestResetNeedsAVHDXDeploy(t *testing.T) {
 	s.state.Base = ""
 	if _, err := resetDiff(s); err == nil || len(s.steps) != 0 {
 		t.Fatalf("err %v, steps %v", err, s.steps)
+	}
+}
+
+// TestResetOfAnOldDeploy: a store from before local.avhdx keeps its diffs on the base.
+func TestResetOfAnOldDeploy(t *testing.T) {
+	s := newFakeStore(proto.DiffFile, proto.DiffFile)
+	s.state.Local = ""
+	if _, err := resetDiff(s); err != nil {
+		t.Fatalf("resetDiff: %v", err)
+	}
+	if len(s.parents) != 1 || s.parents[0] != proto.BaseFile {
+		t.Fatalf("parents %v", s.parents)
 	}
 }

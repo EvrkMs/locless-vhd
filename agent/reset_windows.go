@@ -176,8 +176,8 @@ func (o winResetOps) Remove(name string) error {
 	return err
 }
 
-func (o winResetOps) CreateDiff(name string) error {
-	return createVirtualDisk(o.path(name), o.path(proto.BaseFile), 0, 0)
+func (o winResetOps) CreateDiff(name, parent string) error {
+	return createVirtualDisk(o.path(name), o.path(parent), 0, 0)
 }
 
 // Point changes the entry Windows booted from. The letter only names the

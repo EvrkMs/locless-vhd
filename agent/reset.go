@@ -30,8 +30,8 @@ type resetOps interface {
 	// Remove deletes a file of the store; a missing one is fine. A file Windows
 	// runs from gives errInUse.
 	Remove(name string) error
-	// CreateDiff makes an empty differencing disk on top of the base.
-	CreateDiff(name string) error
+	// CreateDiff makes an empty differencing disk on top of parent.
+	CreateDiff(name, parent string) error
 	// Point makes the boot entry Windows booted from use this differencing disk.
 	Point(name string) error
 }
@@ -60,7 +60,11 @@ func resetDiff(ops resetOps) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("удаление %s: %w", next, err)
 	}
-	if err := ops.CreateDiff(next); err != nil {
+	parent := st.Local
+	if parent == "" {
+		parent = st.Base // a deploy from before local.avhdx
+	}
+	if err := ops.CreateDiff(next, parent); err != nil {
 		return "", fmt.Errorf("создание %s: %w", next, err)
 	}
 	if err := ops.Point(next); err != nil {

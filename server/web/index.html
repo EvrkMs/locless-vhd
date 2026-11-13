@@ -69,6 +69,7 @@ dialog input, dialog select { width: 100%; max-width: none; }
 dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px 18px; }
 dialog .alert { margin: 8px 20px 0; }
 dialog.wide { width: min(640px, calc(100vw - 32px)); }
+.message-text { margin: 8px 20px 0; padding: 12px 14px; max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; user-select: text; }
 .metrics { padding: 4px 20px 0; max-height: 70vh; overflow-y: auto; }
 .metrics h3 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 14px 0 4px; }
 .metrics table td { padding: 5px 8px; font-size: 13px; }
@@ -274,6 +275,15 @@ form input { flex: 1 1 180px; }
   <div class="buttons"><button type="button" id="metricsClose">Закрыть</button></div>
 </dialog>
 
+<dialog id="messageDialog" class="wide" aria-labelledby="messageTitle">
+  <h2 id="messageTitle"></h2>
+  <pre class="message-text" id="messageBody"></pre>
+  <div class="buttons">
+    <button type="button" id="messageCopy">Копировать</button>
+    <button type="button" class="main" id="messageClose">Закрыть</button>
+  </div>
+</dialog>
+
 <dialog id="hostDialog" aria-labelledby="hostDialogTitle">
   <form id="hostForm" method="dialog">
     <h2 id="hostDialogTitle"></h2>
@@ -323,6 +333,24 @@ function progress(t) {
   const bar = el('span', { className: stuck(t) ? 'bar failed' : 'bar' }, el('span'));
   bar.firstChild.style.width = t.percent + '%';
   return el('span', {}, bar, t.percent + '%');
+}
+
+// failedTask reports whether the message of a task is an error.
+const failedTask = t => !!t && (t.status === 'failed' || stuck(t));
+
+// messageButton opens the whole message, which the table cuts to one line: only
+// when there is something to read beyond that line or it is an error.
+function messageButton(t) {
+  if (!t || !t.message || (!failedTask(t) && t.message.length <= 40)) return '';
+  return el('button', { type: 'button', textContent: failedTask(t) ? 'Просмотр ошибки' : 'Сообщение', onclick: () => showMessage(t) });
+}
+
+function showMessage(t) {
+  $('messageTitle').textContent = (failedTask(t) ? 'Ошибка · ' : '') + (kindText[t.kind] || t.kind) +
+    ' · ' + (t.host || '') + (t.image ? ' · ' + t.image : '');
+  $('messageBody').textContent = t.message;
+  $('messageCopy').textContent = 'Копировать';
+  $('messageDialog').showModal();
 }
 
 function messageCell(t) {
@@ -447,10 +475,14 @@ function hostActions(h) {
   const hasVersions = image && image.versions.some(v => !v.disabled);
   const edit = { text: 'Изменить', run: () => openHostDialog({ host: h }) };
   const remove = { text: 'Удалить', danger: true, confirm: `Точно удалить ${h.name}?`, run: () => act('DELETE', '/api/hosts/' + h.id) };
+  const shown = h.task || h.lastTask;
+  const view = shown && shown.message && (failedTask(shown) || shown.message.length > 40)
+    ? [{ text: failedTask(shown) ? 'Просмотр ошибки' : 'Сообщение задачи', run: () => showMessage({ ...shown, host: h.name }) }, null]
+    : [];
   if (h.task) {
-    return [{ text: 'Отменить задачу', run: () => act('DELETE', `/api/hosts/${h.id}/task`) }, null, edit, remove];
+    return [...view, { text: 'Отменить задачу', run: () => act('DELETE', `/api/hosts/${h.id}/task`) }, null, edit, remove];
   }
-  return [
+  return [...view,
     { text: 'Клонировать', why: noImage, run: () => post('clone') },
     {
       text: 'Развернуть', why: noImage || (hasVersions ? '' : 'в образе ещё нет версий'),
@@ -511,6 +543,20 @@ function openHostDialog({ host = null, mac = '', name = '' }) {
 $('addHost').addEventListener('click', () => openHostDialog({}));
 $('hostCancel').addEventListener('click', () => $('hostDialog').close());
 $('metricsClose').addEventListener('click', () => $('metricsDialog').close());
+$('messageClose').addEventListener('click', () => $('messageDialog').close());
+$('messageCopy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('messageBody').textContent);
+    $('messageCopy').textContent = 'Скопировано';
+  } catch {
+    // Without the clipboard (plain http on another address) the text is still selectable.
+    const range = document.createRange();
+    range.selectNodeContents($('messageBody'));
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    $('messageCopy').textContent = 'Выделено, нажмите Ctrl+C';
+  }
+});
 $('hostForm').addEventListener('submit', async e => {
   e.preventDefault();
   const name = $('hostName').value, image = $('hostImage').value;
@@ -542,6 +588,7 @@ function activeRow(t) {
     el('td', { className: 'when hide-sm', textContent: ago(t.createdAt) }),
     // A failed attempt has already sent how far it got, while the PC still shows the error.
     el('td', { className: 'actions' },
+      messageButton(t), messageButton(t) ? ' ' : '',
       t.hasMetrics ? el('button', { type: 'button', textContent: 'Метрики', onclick: () => showMetrics(t) }) : '',
       t.hasMetrics ? ' ' : '',
       button('Отменить', '', () => act('DELETE', `/api/hosts/${t.hostId}/task`))));
@@ -558,7 +605,7 @@ function doneRow(t) {
     message,
     el('td', { className: 'when hide-sm', textContent: ago(t.createdAt) }),
     el('td', { className: 'when', textContent: ago(t.finishedAt) }),
-    el('td', { className: 'actions' }, t.hasMetrics
+    el('td', { className: 'actions' }, messageButton(t), messageButton(t) && t.hasMetrics ? ' ' : '', t.hasMetrics
       ? el('button', { type: 'button', textContent: 'Метрики', onclick: () => showMetrics(t) })
       : ''));
 }

@@ -87,7 +87,7 @@ func (w *worker) runClone(task *proto.AgentTask) error {
 		st.Center, st.Caption = "0%", "подготовка"
 		st.Title, st.Detail = "Клонирование диска", "Образ "+task.Image+" · не выключайте компьютер"
 	})
-	w.rec = newRecorder(w.attempts)
+	w.rec = w.newRecorder()
 	w.rec.Step("Открытие диска")
 
 	src, err := w.openDisk()

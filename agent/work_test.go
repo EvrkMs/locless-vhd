@@ -93,6 +93,28 @@ func TestCheckTaskRunsToTheEnd(t *testing.T) {
 	if ok, _ := s.HasTask(ctx, testMAC); ok {
 		t.Fatal("the PC would boot WinPE again")
 	}
+	// The check times the way to the server, which is what it is used to measure.
+	metrics, err := s.TaskMetrics(ctx, last.ID)
+	if err != nil || !strings.Contains(metrics, "Связь с сервером") || !strings.Contains(metrics, "Попыток связи с сервером") {
+		t.Fatalf("metrics: %s, err %v", metrics, err)
+	}
+}
+
+// TestFirstContactRetriesQuickly: an unreachable server is asked again after a
+// second, and every failed try is on the screen.
+func TestFirstContactRetriesQuickly(t *testing.T) {
+	w, _ := testWorker("http://127.0.0.1:1") // nothing listens there
+	var slept []time.Duration
+	w.sleep = func(d time.Duration) { slept = append(slept, d) }
+	if _, err := w.fetchTask(); err == nil {
+		t.Fatal("no error")
+	}
+	if len(slept) != serverTries || slept[0] != contactDelay || w.startup.tries != serverTries {
+		t.Fatalf("slept %v, tries %d", slept, w.startup.tries)
+	}
+	if log := strings.Join(w.screen.snapshot().Log, " | "); !strings.Contains(log, "попытка 1 за") {
+		t.Fatalf("log: %s", log)
+	}
 }
 
 func TestNoTaskRebootsToDisk(t *testing.T) {

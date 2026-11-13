@@ -30,6 +30,7 @@ type client struct {
 	server  string
 	mac     string
 	http    *http.Client // short requests
+	contact *http.Client // the first request of an attempt, see contactTimeout
 	bulk    *http.Client // image data
 	traffic *traffic     // bytes both clients moved
 }
@@ -41,6 +42,7 @@ func newClient(cfg proto.AgentConfig) *client {
 		server:  cfg.Server,
 		mac:     cfg.MAC,
 		http:    &http.Client{Timeout: 10 * time.Second, Transport: counted},
+		contact: &http.Client{Timeout: contactTimeout, Transport: counted},
 		bulk:    &http.Client{Timeout: 5 * time.Minute, Transport: counted},
 		traffic: t,
 	}
@@ -165,7 +167,7 @@ func (c *client) cloneFinish(id int64, m proto.Manifest) (proto.CloneResult, err
 
 // task asks for the active task. It returns nil if there is none.
 func (c *client) task() (*proto.AgentTask, error) {
-	res, err := c.http.Get(c.server + "/agent/task?mac=" + url.QueryEscape(c.mac))
+	res, err := c.contact.Get(c.server + "/agent/task?mac=" + url.QueryEscape(c.mac))
 	if err != nil {
 		return nil, err
 	}

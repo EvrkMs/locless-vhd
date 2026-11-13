@@ -165,7 +165,7 @@ func (w *worker) deployInto(task *proto.AgentTask, title string, open func() (ta
 		st.Center, st.Caption = "0%", "подготовка"
 		st.Title, st.Detail = title, "Образ "+task.Image
 	})
-	w.rec = newRecorder(w.attempts)
+	w.rec = w.newRecorder()
 	w.rec.Step("Открытие диска")
 
 	dst, err := open()
@@ -353,7 +353,7 @@ func (w *worker) runWipe(task *proto.AgentTask, job wipeJob) error {
 		st.Center, st.Caption = "0%", "подготовка"
 		st.Title, st.Detail = job.title, job.result
 	})
-	w.rec = newRecorder(w.attempts)
+	w.rec = w.newRecorder()
 	w.rec.Step("Открытие диска")
 	dst, err := w.openTarget()
 	if err != nil {

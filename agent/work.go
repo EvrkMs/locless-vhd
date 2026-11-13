@@ -15,13 +15,19 @@ import (
 
 // How long the agent keeps trying before it shows an error.
 const (
-	networkTries = 45 // WinPE can take a while to get an address
-	serverTries  = 30
+	networkTries = 180 // every addressPoll: WinPE can take a while to get an address
+	serverTries  = 30  // every contactDelay, each up to contactTimeout
 	finishTries  = 20
 	reportFails  = 10 // reports in a row that may fail during a task
 	retryDelay   = 2 * time.Second
-	rebootDelay  = 10   // seconds on screen before the reboot
-	maxDetails   = 4000 // bytes of a stack sent to the server, which takes small reports
+	// The address and the first contact are asked for often and briefly: a first
+	// connection often loses its SYN while the link settles, and waiting the full
+	// timeout of an ordinary request for it cost 10 s on every boot.
+	addressPoll    = 500 * time.Millisecond
+	contactDelay   = time.Second
+	contactTimeout = 3 * time.Second
+	rebootDelay    = 10   // seconds on screen before the reboot
+	maxDetails     = 4000 // bytes of a stack sent to the server, which takes small reports
 )
 
 // checkSteps is how long the link check runs, one report per step.
@@ -72,6 +78,22 @@ type worker struct {
 	rec        *recorder                            // metrics of the clone or deploy running now, nil otherwise
 	attempts   int                                  // tries of the task since this boot, for the metrics
 	shrinkSaid string                               // the last word of Shrink about the volume, for the metrics
+	startup    startTimes                           // how long this attempt took to reach the server
+}
+
+// startTimes is the way of an attempt to the server, for the metrics of its task.
+type startTimes struct {
+	address, contact time.Duration
+	tries            int // requests to the server, the one that worked included
+}
+
+// newRecorder starts the metrics of a task with the way to the server.
+func (w *worker) newRecorder() *recorder {
+	r := newRecorder(w.attempts)
+	r.Add("Получение адреса", w.startup.address)
+	r.Add("Связь с сервером", w.startup.contact)
+	r.Count("Попыток связи с сервером", uint64(w.startup.tries))
+	return r
 }
 
 // Stages of the link check, in order.
@@ -115,14 +137,19 @@ func (w *worker) attempt() error {
 		st.Stages = stages(w.names, stageNetwork, ui.StageActive)
 	})
 
+	w.startup = startTimes{}
+	began := time.Now()
 	ip, err := w.waitNetwork()
+	w.startup.address = time.Since(began)
 	if err != nil {
 		return err
 	}
 	w.screen.log("сеть: адрес " + ip)
 	w.setStage(stageServer)
 
+	began = time.Now()
 	task, err := w.fetchTask()
+	w.startup.contact = time.Since(began)
 	if err != nil {
 		return err
 	}
@@ -170,7 +197,7 @@ func (w *worker) waitNetwork() (string, error) {
 		if ip := w.localIP(); ip != "" {
 			return ip, nil
 		}
-		w.sleep(retryDelay)
+		w.sleep(addressPoll)
 	}
 	return "", errors.New("нет адреса в сети: возможно, в WinPE нет драйвера сетевой карты")
 }
@@ -178,13 +205,16 @@ func (w *worker) waitNetwork() (string, error) {
 // fetchTask asks the server for a task, retrying while it is unreachable.
 func (w *worker) fetchTask() (*proto.AgentTask, error) {
 	var last error
-	for range serverTries {
+	for try := 1; try <= serverTries; try++ {
+		w.startup.tries = try
+		began := time.Now()
 		task, err := w.client.task()
 		if err == nil {
 			return task, nil
 		}
 		last = err
-		w.sleep(retryDelay)
+		w.screen.log(fmt.Sprintf("сервер: попытка %d за %.1f с: %v", try, time.Since(began).Seconds(), err))
+		w.sleep(contactDelay)
 	}
 	return nil, fmt.Errorf("сервер не отвечает: %w", last)
 }
@@ -192,6 +222,10 @@ func (w *worker) fetchTask() (*proto.AgentTask, error) {
 // runCheck exercises the whole link: many small reports, then the result.
 func (w *worker) runCheck(id int64, ip string) error {
 	w.setStage(stageCheck)
+	// The check is the cheapest way to time the boot through WinPE, so it reports
+	// metrics too: the server adds the boot, the agent the way to the server.
+	w.rec = w.newRecorder()
+	w.rec.Step("Проверка связи")
 	w.screen.update(func(st *ui.State) {
 		st.Phase, st.Percent = ui.PhaseDeploy, 0
 		st.Title, st.Detail = "Проверка связи", "Диск не меняется"

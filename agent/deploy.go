@@ -127,6 +127,19 @@ type vhdTarget interface {
 	Boot(state proto.StoreState, accounts *proto.Accounts) error
 }
 
+// updater is a target that may already hold an earlier version of the image, laid
+// out the same way. Then only the places whose data differs are written.
+type updater interface {
+	// Held returns what an earlier deploy of image wrote, if it finished.
+	Held(image string) (proto.BaseIndex, bool)
+	// Reopen readies the disk for writing over what it holds, with its table as it
+	// is. It forgets what was held before the first write, so a deploy that stops
+	// halfway is followed by a whole one.
+	Reopen(m proto.Manifest) error
+	// Remember records what the disk holds once a deploy has written all of it.
+	Remember(proto.BaseIndex) error
+}
+
 // fitFresh plans the table of the image on a new virtual disk of size bytes.
 func fitFresh(m proto.Manifest, size uint64) (proto.Manifest, error) {
 	if m.SectorSize != 512 && m.SectorSize != 4096 {
@@ -216,16 +229,31 @@ func (w *worker) deployInto(task *proto.AgentTask, title string, open func() (ta
 	}
 
 	w.screen.update(func(st *ui.State) { st.Hint = "Не выключайте компьютер" })
-	w.rec.Step("Таблица разделов")
-	if err := dst.Prepare(fitted); err != nil {
-		return fmt.Errorf("не удалось подготовить диск: %w", err)
+	d := deployRun{w: w, dst: dst, task: task.ID, info: info}
+	held, update := heldUpdate(dst, task.Image, info, fitted)
+	if update {
+		w.rec.Step("Обновление поверх прежней версии")
+		w.rec.Note("Обновление", fmt.Sprintf("v%d → v%d", held.Version, info.Version))
+		w.screen.log(fmt.Sprintf("на диске v%d, пишутся только изменения", held.Version))
+		if err := dst.(updater).Reopen(fitted); err != nil {
+			return fmt.Errorf("не удалось открыть диск для обновления: %w", err)
+		}
+		d.held = make(map[[2]uint32]proto.Sum, len(held.Entries))
+		for _, e := range held.Entries {
+			d.held[[2]uint32{e.Partition, e.Position}] = e.Hash
+		}
+	} else {
+		w.rec.Step("Таблица разделов")
+		if err := dst.Prepare(fitted); err != nil {
+			return fmt.Errorf("не удалось подготовить диск: %w", err)
+		}
+		w.screen.log("таблица разделов записана")
 	}
-	w.screen.log("таблица разделов записана")
 	if len(task.Table) > 0 {
 		w.forgetTable() // the volume it was saved for is gone
 	}
 
-	d := deployRun{w: w, dst: dst, task: task.ID, info: info, started: time.Now()}
+	d.started = time.Now()
 	d.speeds.update(d.started, "", 0, w.client.traffic) // the start, for the first speed
 	switch err := d.write(); {
 	case errors.Is(err, errTaskGone):
@@ -246,6 +274,14 @@ func (w *worker) deployInto(task *proto.AgentTask, title string, open func() (ta
 		return fmt.Errorf("не удалось завершить запись: %w", err)
 	}
 	writing := time.Since(d.started)
+	// Without the record the next deploy writes everything, which is slower and
+	// nothing worse, so a failure only goes to the log.
+	if u, ok := dst.(updater); ok {
+		x := proto.BaseIndex{Image: task.Image, Version: info.Version, BlockSize: info.BlockSize, Manifest: fitted, Entries: d.entries}
+		if err := u.Remember(x); err != nil {
+			w.screen.log("список блоков base не сохранён: " + err.Error())
+		}
+	}
 	w.rec.Step("Расширение тома")
 	if err := dst.Grow(fitted); err != nil {
 		// Windows still boots, on a smaller volume.
@@ -268,12 +304,32 @@ func (w *worker) deployInto(task *proto.AgentTask, title string, open func() (ta
 	w.rec.Step("Отчёт серверу")
 	message := fmt.Sprintf("%s v%d, записано %s за %s, %s", task.Image, info.Version, formatBytes(d.written),
 		formatDuration(writing), named)
+	if update {
+		message = fmt.Sprintf("%s v%d → v%d: изменилось %d блоков из %d, записано %s за %s, %s", task.Image,
+			held.Version, info.Version, len(d.entries)-d.unchanged, len(d.entries), formatBytes(d.written),
+			formatDuration(writing), named)
+	}
 	if err := w.finish(task.ID, true, message); err != nil {
 		return err
 	}
 	w.screen.log("готово: " + message)
 	w.showResult("Готово", "Образ "+task.Image+" развёрнут")
 	return nil
+}
+
+// heldUpdate says whether the deploy may write only what differs from what the
+// disk holds: the same image, a finished earlier deploy, the same block size and
+// the same table on this disk. Anything else is a whole deploy.
+func heldUpdate(dst target, image string, info proto.DeployInfo, fitted proto.Manifest) (proto.BaseIndex, bool) {
+	u, ok := dst.(updater)
+	if !ok {
+		return proto.BaseIndex{}, false
+	}
+	held, ok := u.Held(image)
+	if !ok || held.Image != image || held.BlockSize != info.BlockSize || !proto.SameLayout(held.Manifest, fitted) {
+		return proto.BaseIndex{}, false
+	}
+	return held, true
 }
 
 // nameWindows gives the deployed Windows the name the PC has in the panel and says
@@ -473,17 +529,19 @@ func (w *worker) confirmWipe(dst target, result string) bool {
 
 // deployRun is the state of one pass over the image.
 type deployRun struct {
-	w        *worker
-	dst      target
-	task     int64
-	info     proto.DeployInfo
-	started  time.Time
-	reported time.Time
-	entries  []proto.DeployEntry
-	done     int
-	written  uint64
-	sizes    map[uint32]uint64
-	speeds   speeds
+	w         *worker
+	dst       target
+	task      int64
+	info      proto.DeployInfo
+	started   time.Time
+	reported  time.Time
+	entries   []proto.DeployEntry
+	held      map[[2]uint32]proto.Sum // what the disk holds already, nil for a whole deploy
+	unchanged int                     // places skipped because the disk holds them already
+	done      int
+	written   uint64
+	sizes     map[uint32]uint64
+	speeds    speeds
 }
 
 // write fills every place of the list on the disk.
@@ -507,6 +565,14 @@ func (d *deployRun) write() error {
 	zeros := make([]byte, d.info.BlockSize)
 	rec.Step("Запись нулевых блоков")
 	for i, e := range d.entries {
+		if d.held != nil {
+			if hash, ok := d.held[[2]uint32{e.Partition, e.Position}]; ok && hash == e.Hash {
+				d.unchanged++
+				d.done++
+				rec.Count("блоков без изменений", 1)
+				continue
+			}
+		}
 		if e.Zero() {
 			if err := d.writeZero(e, zeros); err != nil {
 				return err

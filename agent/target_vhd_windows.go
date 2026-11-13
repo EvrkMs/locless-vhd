@@ -108,7 +108,8 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	if err := protectStore(storeLetter + `:\`); err != nil {
 		return fmt.Errorf("права на хранилище: %w", err)
 	}
-	names := append([]string{proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB, proto.SaveFile, proto.LocalFile}, proto.OldFiles...)
+	names := append([]string{proto.BaseIndexFile, proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB,
+		proto.SaveFile, proto.LocalFile}, proto.OldFiles...)
 	for _, name := range append(names, proto.BaseFile) {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("старый файл %s: %w", name, err)
@@ -127,6 +128,67 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	inner.allowFormat = true // it is our own file, not a disk of the PC
 	d.inner = inner
 	return inner.Prepare(m)
+}
+
+// Held reads what the last deploy wrote into base.vhdx, if it finished.
+func (d *vhdDisk) Held(image string) (proto.BaseIndex, bool) {
+	if !d.prepared || mountStore(d.phys.number) != nil {
+		return proto.BaseIndex{}, false
+	}
+	if _, err := os.Stat(storePath(proto.BaseFile)); err != nil {
+		return proto.BaseIndex{}, false
+	}
+	b, err := os.ReadFile(storePath(proto.BaseIndexFile))
+	if err != nil {
+		return proto.BaseIndex{}, false
+	}
+	x, err := proto.ParseBaseIndex(b)
+	if err != nil || x.Image != image {
+		return proto.BaseIndex{}, false
+	}
+	return x, true
+}
+
+// Reopen keeps base.vhdx and its table for an update. The record of what it
+// holds goes first: from the first write on the base is neither version. Every
+// disk on top of the base is made from it and stops being valid once it changes,
+// so they all go, as in Prepare.
+func (d *vhdDisk) Reopen(m proto.Manifest) error {
+	if err := mountStore(d.phys.number); err != nil {
+		return err
+	}
+	if err := protectStore(storeLetter + `:\`); err != nil {
+		return fmt.Errorf("права на хранилище: %w", err)
+	}
+	names := append([]string{proto.BaseIndexFile, proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB,
+		proto.SaveFile, proto.LocalFile}, proto.OldFiles...)
+	for _, name := range names {
+		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("старый файл %s: %w", name, err)
+		}
+	}
+	if err := d.attach(proto.BaseFile); err != nil {
+		return err
+	}
+	inner, err := newWriteDisk(d.attached.number)
+	if err != nil {
+		return err
+	}
+	d.inner = inner
+	return inner.Reopen(m)
+}
+
+// Remember records what base.vhdx holds now.
+func (d *vhdDisk) Remember(x proto.BaseIndex) error {
+	b, err := x.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	path := storePath(proto.BaseIndexFile)
+	if err := os.WriteFile(path+".new", b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(path+".new", path)
 }
 
 func (d *vhdDisk) WriteBlock(partition uint32, offset uint64, data []byte) error {

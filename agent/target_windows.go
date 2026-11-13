@@ -387,7 +387,23 @@ func (w *writeDisk) Prepare(m proto.Manifest) error {
 		return fmt.Errorf("обновление диска: %w", err)
 	}
 	release()
+	return w.openForWrite(disk, m)
+}
 
+// Reopen takes the partitions of the table the disk has, which must be the one m
+// describes, for writing over what they hold.
+func (w *writeDisk) Reopen(m proto.Manifest) error {
+	disk, err := openWritable(fmt.Sprintf(`\\.\PhysicalDrive%d`, w.number))
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(disk)
+	return w.openForWrite(disk, m)
+}
+
+// openForWrite locks the partitions the image fills and opens the disk for the
+// writes.
+func (w *writeDisk) openForWrite(disk syscall.Handle, m proto.Manifest) error {
 	if err := w.lockNew(disk, m); err != nil {
 		return err
 	}

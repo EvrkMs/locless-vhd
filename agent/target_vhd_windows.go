@@ -296,6 +296,14 @@ func (d *vhdDisk) installReset() (err error) {
 			return err
 		}
 	}
+	// Safe mode starts only the services listed under SafeBoot. Without the reset
+	// there the session of a safe boot would be the start of the next one.
+	for _, mode := range []string{"Minimal", "Network"} {
+		safe := hive + `\` + set + `\Control\SafeBoot\` + mode + `\` + resetServiceName
+		if err := runReg("add", safe, "/ve", "/t", "REG_SZ", "/d", "Service", "/f"); err != nil {
+			return err
+		}
+	}
 	// Windows booted from a dynamic virtual disk grows it to full size first, to
 	// be sure the store holds it. With the disk as large as the store allows that
 	// would not fit; StoreNeed counts what the files can really take instead.

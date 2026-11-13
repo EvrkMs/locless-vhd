@@ -122,13 +122,13 @@ const (
 	DiffFileB = "diff-b.vhdx" // its pair: the reset prepares one while Windows runs on the other
 	StateFile = "locless-vhd.json"
 	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
-	// AccountsFile asks the first boot after a deploy to set up the accounts. It
-	// holds a password, so the service deletes it once read.
+	// AccountsFile holds the accounts the reset service sets on every boot. It
+	// holds a password: the store lets only SYSTEM and administrators read it.
 	AccountsFile = "accounts.json"
 )
 
-// Accounts is what the first boot after a deploy into VHDX does to the users
-// of Windows. An empty field leaves that part alone.
+// Accounts is what the reset service does to the users of Windows on every boot.
+// An empty field leaves that part alone.
 type Accounts struct {
 	// AdminPassword is set on the built-in administrator, which is enabled: UAC
 	// asks a standard user for its name and this password.

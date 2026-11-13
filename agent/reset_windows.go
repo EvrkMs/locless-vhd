@@ -208,19 +208,7 @@ func (o winResetOps) ReadAccounts() (*proto.Accounts, error) {
 	return &a, nil
 }
 
-func (o winResetOps) RemoveAccounts() error { return os.Remove(o.path(proto.AccountsFile)) }
-
 func (o winResetOps) ApplyAccounts(a *proto.Accounts) error { return applyAccounts(a) }
-
-// Reboot restarts the PC a few seconds later, so the service has time to log
-// and stop.
-func (o winResetOps) Reboot() error {
-	out, err := exec.Command("shutdown", "/r", "/t", "5", "/c", "locless-vhd: учётные записи настроены").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("shutdown: %w: %s", err, lastLine(out))
-	}
-	return nil
-}
 
 // log appends a line to the log on the store; a failure only loses the line.
 func (o winResetOps) log(line string) {

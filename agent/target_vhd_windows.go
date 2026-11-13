@@ -200,10 +200,10 @@ func (d *vhdDisk) SetName(name string) error {
 // the boot menu of the firmware and writes the state file. Until it is done the
 // PC has no Windows to boot, so unlike MakeBootable a failure fails the deploy.
 //
-// With accounts to set up, the first boot goes straight to local instead: users
-// and passwords are changed by Windows itself, and what it writes then must stay.
-// The reset service does the accounts on that boot, then makes the differencing
-// disk, points the entry at it and restarts the PC.
+// Accounts go into a file on the store that stays: users and passwords live in
+// the SAM, which only a running Windows can change, so the reset service sets
+// them on every boot. Booting local itself to set them once does not work: no
+// differencing disk can be made on top of the disk Windows runs from.
 func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return errors.New("загрузочная запись VHDX работает только в WinPE")
@@ -214,12 +214,7 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if err := d.installReset(); err != nil {
 		return fmt.Errorf("служба сброса: %w", err)
 	}
-	top := proto.DiffFile
-	if accounts.Empty() {
-		if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
-			return err
-		}
-	} else {
+	if !accounts.Empty() {
 		b, err := json.Marshal(accounts)
 		if err != nil {
 			return err
@@ -227,9 +222,11 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 		if err := os.WriteFile(storePath(proto.AccountsFile), b, 0o600); err != nil {
 			return err
 		}
-		top = proto.LocalFile
 	}
-	if err := d.attach(top); err != nil {
+	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
+		return err
+	}
+	if err := d.attach(proto.DiffFile); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -248,10 +245,7 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if err != nil {
 		return fmt.Errorf("bcdboot: %w: %s", err, lastLine(out))
 	}
-	state.Base, state.Local, state.Format = proto.BaseFile, proto.LocalFile, "vhdx"
-	if top == proto.DiffFile {
-		state.Diff = proto.DiffFile
-	}
+	state.Base, state.Local, state.Diff, state.Format = proto.BaseFile, proto.LocalFile, proto.DiffFile, "vhdx"
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err

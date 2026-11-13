@@ -34,41 +34,36 @@ type resetOps interface {
 	CreateDiff(name, parent string) error
 	// Point makes the boot entry Windows booted from use this differencing disk.
 	Point(name string) error
-	// ReadAccounts returns what the deploy asked of the first boot, nil if nothing.
+	// ReadAccounts returns the accounts the deploy asked for, nil if none.
 	ReadAccounts() (*proto.Accounts, error)
-	RemoveAccounts() error
 	// ApplyAccounts changes the users of the running Windows.
 	ApplyAccounts(*proto.Accounts) error
-	// Reboot restarts the PC once the service is done.
-	Reboot() error
 }
 
-// startup is what the service does when Windows starts. The first boot after a
-// deploy with accounts runs from local itself: the accounts are set up there, so
-// they stay, then the first differencing disk is made and the PC restarts into it.
+// startup is what the service does when Windows starts. The accounts come
+// first, before a player is likely to have signed in: they live in the SAM,
+// which only a running Windows changes, so they land in the differencing disk
+// and are set again on every boot. A failure there is logged and does not stop
+// the reset.
 func startup(ops resetOps) (string, error) {
 	accounts, err := ops.ReadAccounts()
 	if err != nil {
-		return "", fmt.Errorf("файл учётных записей: %w", err)
+		accounts, err = nil, fmt.Errorf("файл учётных записей: %w", err)
 	}
-	if accounts == nil {
-		return resetDiff(ops)
+	if accounts != nil {
+		err = ops.ApplyAccounts(accounts)
 	}
-	applied := ops.ApplyAccounts(accounts)
-	// The file holds a password: it goes whatever happened, and a failure is only
-	// logged. Trying again on the next boot would write into a throwaway disk.
-	removed := ops.RemoveAccounts()
-	said, err := resetDiff(ops)
-	if err != nil {
-		return "", errors.Join(applied, removed, err)
+	said, resetErr := resetDiff(ops)
+	if resetErr != nil {
+		return "", errors.Join(err, resetErr)
 	}
-	if err := ops.Reboot(); err != nil {
-		return "", errors.Join(applied, removed, fmt.Errorf("перезагрузка: %w", err))
-	}
-	if err := errors.Join(applied, removed); err != nil {
+	switch {
+	case err != nil:
 		return "учётные записи с ошибкой, " + said, err
+	case accounts != nil:
+		return "учётные записи применены, " + said, nil
 	}
-	return "учётные записи настроены, " + said + ", перезагрузка", nil
+	return said, nil
 }
 
 // resetDiff prepares the next boot and says what it did.

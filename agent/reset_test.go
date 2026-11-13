@@ -20,26 +20,14 @@ type fakeStore struct {
 	accounts *proto.Accounts
 	applied  *proto.Accounts
 	applyErr error
-	rebooted bool
 }
 
 func (s *fakeStore) ReadAccounts() (*proto.Accounts, error) { return s.accounts, nil }
-func (s *fakeStore) RemoveAccounts() error {
-	s.steps = append(s.steps, "remove accounts")
-	s.accounts = nil
-	return nil
-}
 
 func (s *fakeStore) ApplyAccounts(a *proto.Accounts) error {
 	s.steps = append(s.steps, "accounts")
 	s.applied = a
 	return s.applyErr
-}
-
-func (s *fakeStore) Reboot() error {
-	s.steps = append(s.steps, "reboot")
-	s.rebooted = true
-	return nil
 }
 
 func newFakeStore(running string, stateDiff string) *fakeStore {
@@ -147,48 +135,45 @@ func TestResetOfAnOldDeploy(t *testing.T) {
 	}
 }
 
-// TestFirstBootSetsUpAccounts: Windows runs from local, the deploy made no
-// differencing disk yet. The accounts come first, the password file goes, then the
-// first differencing disk, and the PC restarts into it.
-func TestFirstBootSetsUpAccounts(t *testing.T) {
-	s := newFakeStore(proto.LocalFile, "")
-	delete(s.files, proto.DiffFile)
-	delete(s.files, proto.DiffFileB)
+// TestAccountsEveryBoot: the accounts come before the reset, the file stays for
+// the next boot, and the PC does not restart.
+func TestAccountsEveryBoot(t *testing.T) {
+	s := newFakeStore(proto.DiffFile, proto.DiffFile)
 	s.accounts = &proto.Accounts{AdminPassword: "secret", PlayerUser: "Player"}
-	if _, err := startup(s); err != nil {
+	said, err := startup(s)
+	if err != nil {
 		t.Fatalf("startup: %v", err)
 	}
-	want := "accounts,remove accounts,remove " + proto.DiffFileB + ",create " + proto.DiffFileB +
-		",point " + proto.DiffFileB + ",state " + proto.DiffFileB + ",reboot"
+	want := "accounts,remove " + proto.DiffFileB + ",create " + proto.DiffFileB +
+		",point " + proto.DiffFileB + ",state " + proto.DiffFileB
 	if got := strings.Join(s.steps, ","); got != want {
 		t.Fatalf("steps %s, want %s", got, want)
 	}
-	if s.applied == nil || s.applied.PlayerUser != "Player" || s.accounts != nil || s.parents[0] != proto.LocalFile {
-		t.Fatalf("applied %+v, file %+v, parents %v", s.applied, s.accounts, s.parents)
+	if s.applied == nil || s.applied.PlayerUser != "Player" || s.accounts == nil || !strings.Contains(said, "учётные записи") {
+		t.Fatalf("applied %+v, file %+v, said %q", s.applied, s.accounts, said)
 	}
 }
 
-// TestFirstBootGoesOnAfterAFailure: a failed account change must not leave the PC
-// writing into local on every boot.
-func TestFirstBootGoesOnAfterAFailure(t *testing.T) {
-	s := newFakeStore(proto.LocalFile, "")
+// TestResetGoesOnAfterAnAccountFailure: the next boot must start clean anyway.
+func TestResetGoesOnAfterAnAccountFailure(t *testing.T) {
+	s := newFakeStore(proto.DiffFile, proto.DiffFile)
 	s.accounts = &proto.Accounts{PlayerUser: "Player"}
 	s.applyErr = errors.New("access denied")
 	if _, err := startup(s); err == nil || !strings.Contains(err.Error(), "access denied") {
 		t.Fatalf("startup: %v", err)
 	}
-	if !s.rebooted || s.pointed != proto.DiffFileB || s.accounts != nil {
-		t.Fatalf("rebooted %v, pointed %s, file %+v", s.rebooted, s.pointed, s.accounts)
+	if s.pointed != proto.DiffFileB || s.state.Diff != proto.DiffFileB {
+		t.Fatalf("pointed %s, state %s", s.pointed, s.state.Diff)
 	}
 }
 
-// TestUsualBootDoesNotRestart: without the file it is the plain reset.
-func TestUsualBootDoesNotRestart(t *testing.T) {
+// TestUsualBootWithoutAccounts: without the file it is the plain reset.
+func TestUsualBootWithoutAccounts(t *testing.T) {
 	s := newFakeStore(proto.DiffFile, proto.DiffFile)
 	if _, err := startup(s); err != nil {
 		t.Fatalf("startup: %v", err)
 	}
-	if s.rebooted || s.applied != nil {
-		t.Fatalf("rebooted %v, applied %+v", s.rebooted, s.applied)
+	if s.applied != nil || s.pointed != proto.DiffFileB {
+		t.Fatalf("applied %+v, pointed %s", s.applied, s.pointed)
 	}
 }

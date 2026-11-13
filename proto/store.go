@@ -3,6 +3,7 @@ package proto
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -118,7 +119,34 @@ const (
 	DiffFileB = "diff-b.avhdx" // its pair: the reset prepares one while Windows runs on the other
 	StateFile = "locless-vhd.json"
 	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
+	// AccountsFile asks the first boot after a deploy to set up the accounts. It
+	// holds a password, so the service deletes it once read.
+	AccountsFile = "accounts.json"
 )
+
+// Accounts is what the first boot after a deploy into VHDX does to the users
+// of Windows. An empty field leaves that part alone.
+type Accounts struct {
+	// AdminPassword is set on the built-in administrator, which is enabled: UAC
+	// asks a standard user for its name and this password.
+	AdminPassword string `json:"adminPassword,omitempty"`
+	// PlayerUser loses administrator rights; it is created if missing, without a
+	// password. An account the image already has keeps its profile.
+	PlayerUser string `json:"playerUser,omitempty"`
+}
+
+// Empty reports whether there is nothing to do.
+func (a *Accounts) Empty() bool {
+	return a == nil || a.AdminPassword == "" && a.PlayerUser == ""
+}
+
+// ValidUserName reports whether Windows accepts name for a local account.
+func ValidUserName(name string) bool {
+	if name == "" || len([]rune(name)) > 20 || strings.TrimRight(name, ". ") != name {
+		return false
+	}
+	return !strings.ContainsAny(name, `"/\[]:;|=,+*?<>@`)
+}
 
 // OtherDiff returns the differencing disk paired with name.
 func OtherDiff(name string) string {

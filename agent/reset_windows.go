@@ -84,7 +84,7 @@ func resetOnce() (string, error) {
 	}
 	defer windows.DeleteVolumeMountPoint(windows.StringToUTF16Ptr(letter + `:\`))
 	ops := winResetOps{root: letter + `:\`}
-	said, err := resetDiff(ops)
+	said, err := startup(ops)
 	line := said
 	if err != nil {
 		line = "ошибка: " + err.Error()
@@ -189,6 +189,35 @@ func (o winResetOps) Point(name string) error {
 		if err != nil {
 			return fmt.Errorf("bcdedit %s: %w: %s", element, err, lastLine(out))
 		}
+	}
+	return nil
+}
+
+func (o winResetOps) ReadAccounts() (*proto.Accounts, error) {
+	b, err := os.ReadFile(o.path(proto.AccountsFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var a proto.Accounts
+	if err := json.Unmarshal(b, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (o winResetOps) RemoveAccounts() error { return os.Remove(o.path(proto.AccountsFile)) }
+
+func (o winResetOps) ApplyAccounts(a *proto.Accounts) error { return applyAccounts(a) }
+
+// Reboot restarts the PC a few seconds later, so the service has time to log
+// and stop.
+func (o winResetOps) Reboot() error {
+	out, err := exec.Command("shutdown", "/r", "/t", "5", "/c", "locless-vhd: учётные записи настроены").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("shutdown: %w: %s", err, lastLine(out))
 	}
 	return nil
 }

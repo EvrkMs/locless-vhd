@@ -643,15 +643,16 @@ func TestEscapeStopsThePrepare(t *testing.T) {
 // fakeVHD is a deploy into VHDX: the same writes, then Boot.
 type fakeVHD struct {
 	*fakeTarget
-	state   *proto.StoreState
-	bootErr error
+	state    *proto.StoreState
+	accounts *proto.Accounts
+	bootErr  error
 }
 
-func (v *fakeVHD) Boot(state proto.StoreState) error {
+func (v *fakeVHD) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if v.name == "" {
 		return errors.New("boot before the name was written into the base")
 	}
-	v.state = &state
+	v.state, v.accounts = &state, accounts
 	return v.bootErr
 }
 
@@ -673,10 +674,16 @@ func TestDeployVHDWritesTheBaseAndBoots(t *testing.T) {
 	v1 := map[uint32][]byte{0: fill(1, testBlock), 7: fill(7, testBlock)}
 	e.run(t, &fakeDisk{blocks: v1, size: 10 * testBlock})
 
+	ctx := context.Background()
+	e.s.SetSetting(ctx, store.SettingAdminPassword, "secret")
+	e.s.SetSetting(ctx, store.SettingPlayerUser, "Player")
 	v := &fakeVHD{fakeTarget: &fakeTarget{blocks: map[uint64][]byte{}}}
 	w, size, err := e.deployVHD(t, v)
 	if err != nil {
 		t.Fatalf("attempt: %v", err)
+	}
+	if v.accounts == nil || v.accounts.AdminPassword != "secret" || v.accounts.PlayerUser != "Player" {
+		t.Fatalf("accounts: %+v", v.accounts)
 	}
 	if size != store.DefaultVHDSize {
 		t.Fatalf("size %d, want the default of the image", size)
@@ -701,5 +708,8 @@ func TestDeployVHDFailsWithoutBoot(t *testing.T) {
 	v := &fakeVHD{fakeTarget: &fakeTarget{blocks: map[uint64][]byte{}}, bootErr: errors.New("bcdboot failed")}
 	if _, _, err := e.deployVHD(t, v); err == nil || !strings.Contains(err.Error(), "bcdboot failed") {
 		t.Fatalf("attempt: %v", err)
+	}
+	if v.accounts != nil {
+		t.Fatalf("accounts without settings: %+v", v.accounts)
 	}
 }

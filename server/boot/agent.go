@@ -35,6 +35,24 @@ type AgentStore interface {
 	SaveMetrics(ctx context.Context, mac net.HardwareAddr, id int64, metrics string) error
 	TaskInfo(ctx context.Context, id int64) (store.HostTask, error)
 	ImageVHDSize(ctx context.Context, image string) (uint64, error)
+	Setting(ctx context.Context, key string) (string, error)
+}
+
+// accounts reads what the first boot after a deploy into VHDX does to the users
+// of Windows, nil if the panel sets nothing.
+func accounts(ctx context.Context, s AgentStore) (*proto.Accounts, error) {
+	var a proto.Accounts
+	var err error
+	if a.AdminPassword, err = s.Setting(ctx, store.SettingAdminPassword); err != nil {
+		return nil, err
+	}
+	if a.PlayerUser, err = s.Setting(ctx, store.SettingPlayerUser); err != nil {
+		return nil, err
+	}
+	if a.Empty() {
+		return nil, nil
+	}
+	return &a, nil
 }
 
 // addAgentRoutes registers what the agent talks to.
@@ -84,6 +102,10 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 		out := proto.AgentTask{ID: task.ID, Kind: task.Kind, Image: task.Image, Table: table}
 		if task.Kind == store.TaskDeployVHD {
 			if out.VHDSize, err = c.Agent.ImageVHDSize(r.Context(), task.Image); err != nil {
+				internalError(w, c, err)
+				return
+			}
+			if out.Accounts, err = accounts(r.Context(), c.Agent); err != nil {
 				internalError(w, c, err)
 				return
 			}

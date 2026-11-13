@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,9 +32,24 @@ func (h *server) settings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	player, err := h.store.Setting(r.Context(), store.SettingPlayerUser)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	password, err := h.store.Setting(r.Context(), store.SettingAdminPassword)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	// The password itself never leaves the server through the panel: only whether it is set.
 	writeJSON(w, http.StatusOK, map[string]any{"imageDir": dir, "exitMode": mode, "root": h.root,
-		"clientAddr": addr, "addresses": h.addresses(), "bind": h.cfg.Bind})
+		"clientAddr": addr, "addresses": h.addresses(), "bind": h.cfg.Bind,
+		"playerUser": player, "adminPasswordSet": password != ""})
 }
+
+// maxPassword is the longest password Windows takes for a local account.
+const maxPassword = 127
 
 func (h *server) addresses() []string {
 	if h.cfg.Addresses == nil {
@@ -44,7 +60,7 @@ func (h *server) addresses() []string {
 
 // saveSettings stores the fields present in the request.
 func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
-	var in struct{ ImageDir, ExitMode, ClientAddr *string }
+	var in struct{ ImageDir, ExitMode, ClientAddr, PlayerUser, AdminPassword *string }
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -75,6 +91,29 @@ func (h *server) saveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("exit mode changed", "mode", *in.ExitMode)
+	}
+	if in.PlayerUser != nil {
+		name := strings.TrimSpace(*in.PlayerUser)
+		if name != "" && !proto.ValidUserName(name) {
+			writeError(w, http.StatusBadRequest, `Имя пользователя: до 20 символов, без " / \ [ ] : ; | = , + * ? < > @`)
+			return
+		}
+		if err := h.store.SetSetting(r.Context(), store.SettingPlayerUser, name); err != nil {
+			h.fail(w, err)
+			return
+		}
+		h.log.Info("player user changed", "user", name)
+	}
+	if in.AdminPassword != nil {
+		if len(*in.AdminPassword) > maxPassword {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Пароль длиннее %d символов", maxPassword))
+			return
+		}
+		if err := h.store.SetSetting(r.Context(), store.SettingAdminPassword, *in.AdminPassword); err != nil {
+			h.fail(w, err)
+			return
+		}
+		h.log.Info("administrator password changed", "set", *in.AdminPassword != "")
 	}
 	if in.ImageDir != nil {
 		dir, err := prepareImageDir(strings.TrimSpace(*in.ImageDir), h.root)

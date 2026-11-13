@@ -17,6 +17,29 @@ type fakeStore struct {
 	failMake bool
 	steps    []string
 	parents  []string
+	accounts *proto.Accounts
+	applied  *proto.Accounts
+	applyErr error
+	rebooted bool
+}
+
+func (s *fakeStore) ReadAccounts() (*proto.Accounts, error) { return s.accounts, nil }
+func (s *fakeStore) RemoveAccounts() error {
+	s.steps = append(s.steps, "remove accounts")
+	s.accounts = nil
+	return nil
+}
+
+func (s *fakeStore) ApplyAccounts(a *proto.Accounts) error {
+	s.steps = append(s.steps, "accounts")
+	s.applied = a
+	return s.applyErr
+}
+
+func (s *fakeStore) Reboot() error {
+	s.steps = append(s.steps, "reboot")
+	s.rebooted = true
+	return nil
 }
 
 func newFakeStore(running string, stateDiff string) *fakeStore {
@@ -121,5 +144,51 @@ func TestResetOfAnOldDeploy(t *testing.T) {
 	}
 	if len(s.parents) != 1 || s.parents[0] != proto.BaseFile {
 		t.Fatalf("parents %v", s.parents)
+	}
+}
+
+// TestFirstBootSetsUpAccounts: Windows runs from local, the deploy made no
+// differencing disk yet. The accounts come first, the password file goes, then the
+// first differencing disk, and the PC restarts into it.
+func TestFirstBootSetsUpAccounts(t *testing.T) {
+	s := newFakeStore(proto.LocalFile, "")
+	delete(s.files, proto.DiffFile)
+	delete(s.files, proto.DiffFileB)
+	s.accounts = &proto.Accounts{AdminPassword: "secret", PlayerUser: "Player"}
+	if _, err := startup(s); err != nil {
+		t.Fatalf("startup: %v", err)
+	}
+	want := "accounts,remove accounts,remove " + proto.DiffFileB + ",create " + proto.DiffFileB +
+		",point " + proto.DiffFileB + ",state " + proto.DiffFileB + ",reboot"
+	if got := strings.Join(s.steps, ","); got != want {
+		t.Fatalf("steps %s, want %s", got, want)
+	}
+	if s.applied == nil || s.applied.PlayerUser != "Player" || s.accounts != nil || s.parents[0] != proto.LocalFile {
+		t.Fatalf("applied %+v, file %+v, parents %v", s.applied, s.accounts, s.parents)
+	}
+}
+
+// TestFirstBootGoesOnAfterAFailure: a failed account change must not leave the PC
+// writing into local on every boot.
+func TestFirstBootGoesOnAfterAFailure(t *testing.T) {
+	s := newFakeStore(proto.LocalFile, "")
+	s.accounts = &proto.Accounts{PlayerUser: "Player"}
+	s.applyErr = errors.New("access denied")
+	if _, err := startup(s); err == nil || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("startup: %v", err)
+	}
+	if !s.rebooted || s.pointed != proto.DiffFileB || s.accounts != nil {
+		t.Fatalf("rebooted %v, pointed %s, file %+v", s.rebooted, s.pointed, s.accounts)
+	}
+}
+
+// TestUsualBootDoesNotRestart: without the file it is the plain reset.
+func TestUsualBootDoesNotRestart(t *testing.T) {
+	s := newFakeStore(proto.DiffFile, proto.DiffFile)
+	if _, err := startup(s); err != nil {
+		t.Fatalf("startup: %v", err)
+	}
+	if s.rebooted || s.applied != nil {
+		t.Fatalf("rebooted %v, applied %+v", s.rebooted, s.applied)
 	}
 }

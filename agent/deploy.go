@@ -109,8 +109,9 @@ func gptArea(size uint64, sector uint32) (uint64, uint64) {
 type vhdTarget interface {
 	target
 	// Boot puts the differencing disk on top of the written base, makes Windows
-	// boot from it and records state on the store. It runs after SetName.
-	Boot(state proto.StoreState) error
+	// boot from it and records state on the store. It runs after SetName. With
+	// accounts the first boot sets them up and then makes the differencing disk.
+	Boot(state proto.StoreState, accounts *proto.Accounts) error
 }
 
 // fitFresh plans the table of the image on a new virtual disk of size bytes.
@@ -149,7 +150,7 @@ func (w *worker) runDeployVHD(task *proto.AgentTask) error {
 		return vt, err
 	}
 	boot := func(info proto.DeployInfo) error {
-		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: task.VHDSize, Written: time.Now()})
+		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: task.VHDSize, Written: time.Now()}, task.Accounts)
 	}
 	return w.deployInto(task, "Развёртывание в VHDX", open, boot)
 }

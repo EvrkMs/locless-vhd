@@ -28,6 +28,8 @@ type AgentTask struct {
 	Image string `json:"image,omitempty"` // for TaskKindClone
 	// VHDSize is the size of the virtual disk for TaskKindDeployVHD, in bytes.
 	VHDSize uint64 `json:"vhdSize,omitempty"`
+	// Accounts for TaskKindDeployVHD, from the settings of the panel.
+	Accounts *Accounts `json:"accounts,omitempty"`
 	// Table is the partition table saved before a shrink that was never undone, for
 	// example because the PC lost power in the middle of a clone.
 	Table []byte `json:"table,omitempty"`

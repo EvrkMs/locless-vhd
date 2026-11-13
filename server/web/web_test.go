@@ -441,6 +441,35 @@ func TestExitModeSetting(t *testing.T) {
 	}
 }
 
+// TestAccountSettings: the password is stored for the agent but never shown back.
+func TestAccountSettings(t *testing.T) {
+	h, s, _ := panelWithRoot(t)
+	ctx := context.Background()
+	w := do(h, http.MethodPut, "/api/settings", `{"playerUser":" Player ","adminPassword":"s3cret"}`)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "s3cret") {
+		t.Fatalf("save: %d %s", w.Code, w.Body)
+	}
+	var got struct {
+		PlayerUser       string
+		AdminPasswordSet bool
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.PlayerUser != "Player" || !got.AdminPasswordSet {
+		t.Fatalf("answer: %+v, err %v", got, err)
+	}
+	if v, _ := s.Setting(ctx, store.SettingAdminPassword); v != "s3cret" {
+		t.Fatalf("stored password: %q", v)
+	}
+	if w := do(h, http.MethodPut, "/api/settings", `{"playerUser":"a/b"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad name: %d", w.Code)
+	}
+	if w := do(h, http.MethodPut, "/api/settings", `{"adminPassword":"`+strings.Repeat("x", 128)+`"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("long password: %d", w.Code)
+	}
+	if w := do(h, http.MethodPut, "/api/settings", `{"adminPassword":""}`); w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"adminPasswordSet":true`) {
+		t.Fatalf("clear: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestDeleteOnlyTheNewestVersion(t *testing.T) {
 	h, s, dir, _ := imageEnv(t)
 	ctx := context.Background()

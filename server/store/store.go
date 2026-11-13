@@ -122,6 +122,12 @@ const (
 	SettingExitMode = "exit_mode"
 	// SettingClientAddr is the address of this server that PCs of the club use.
 	SettingClientAddr = "client_addr"
+	// SettingAdminPassword is the password a deploy into VHDX gives the built-in
+	// administrator of every PC. It is kept as it is: the agent has to set it.
+	SettingAdminPassword = "admin_password"
+	// SettingPlayerUser is the account players use: a deploy into VHDX makes it a
+	// standard user, creating it if the image has none.
+	SettingPlayerUser = "player_user"
 )
 
 // Store is an open database.

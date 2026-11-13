@@ -79,3 +79,18 @@ func TestStoreNeed(t *testing.T) {
 		t.Fatalf("StoreNeed: %d GiB", got/gib)
 	}
 }
+
+func TestValidUserName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Player": true, "Игрок 1": true, "a.b-c_d": true,
+		"": false, "trailing.": false, "trailing ": false, "a/b": false, `a\b`: false,
+		"a@b": false, "123456789012345678901": false,
+	} {
+		if got := ValidUserName(name); got != want {
+			t.Errorf("%q: %v, want %v", name, got, want)
+		}
+	}
+	if !(&Accounts{}).Empty() || !(*Accounts)(nil).Empty() || (&Accounts{PlayerUser: "p"}).Empty() {
+		t.Error("Empty")
+	}
+}

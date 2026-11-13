@@ -232,6 +232,25 @@ form input { flex: 1 1 180px; }
     </div>
   </section>
   <section>
+    <div class="head"><h2>Учётные записи Windows</h2></div>
+    <form class="field" id="playerForm" style="display:block;padding:14px 18px">
+      <label for="playerUser">Пользователь для игроков</label>
+      <div class="row">
+        <input id="playerUser" placeholder="Player" maxlength="20">
+        <button type="submit">Сохранить</button>
+      </div>
+      <p id="playerNote">После развёртывания в VHDX этот пользователь становится обычным, без прав администратора. Если в образе его нет, он создаётся без пароля, а существующий сохраняет свой рабочий стол. Пусто — не трогать.</p>
+    </form>
+    <form class="field" id="adminForm" style="display:block;padding:14px 18px">
+      <label for="adminPassword">Пароль администратора</label>
+      <div class="row">
+        <input id="adminPassword" type="password" autocomplete="new-password" maxlength="127">
+        <button type="submit">Сохранить</button>
+      </div>
+      <p id="adminNote">Встроенный администратор включается с этим паролем на всех ПК после развёртывания в VHDX, UAC просит его у игроков. Пустое поле с сохранением снимает пароль из настроек.</p>
+    </form>
+  </section>
+  <section>
     <div class="head"><h2>Сеть</h2></div>
     <div class="field">
       <label for="clientAddr">Адрес для компьютеров клуба</label>
@@ -810,6 +829,8 @@ async function loadSettings() {
     $('imageDir').value = s.imageDir;
     $('exitMode').value = s.exitMode;
     $('rootDir').textContent = s.root;
+    $('playerUser').value = s.playerUser;
+    $('adminPassword').placeholder = s.adminPasswordSet ? 'задан, введите новый, чтобы сменить' : 'не задан';
     const select = $('clientAddr');
     if (s.bind) {
       select.replaceChildren(el('option', { value: s.bind, textContent: s.bind }));
@@ -891,6 +912,36 @@ $('scenarioStop').addEventListener('click', () => act('DELETE', '/api/scenarios'
 $('imageForm').addEventListener('submit', async e => {
   e.preventDefault();
   if (await act('POST', '/api/images', { name: $('newImage').value })) e.target.reset();
+});
+
+// saveAccount stores one field of the accounts and says so under it.
+async function saveAccount(field, value, noteId) {
+  try {
+    const s = await api('PUT', '/api/settings', { [field]: value });
+    showError('');
+    $(noteId).textContent = 'Сохранено, применится при следующем развёртывании в VHDX';
+    $(noteId).className = 'saved';
+    return s;
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+$('playerForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const s = await saveAccount('playerUser', $('playerUser').value, 'playerNote');
+  if (s) $('playerUser').value = s.playerUser;
+});
+
+$('adminForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const value = $('adminPassword').value;
+  if (!value && !confirm('Снять пароль администратора из настроек? Новые развёртывания не будут его задавать.')) return;
+  const s = await saveAccount('adminPassword', value, 'adminNote');
+  if (s) {
+    $('adminPassword').value = '';
+    $('adminPassword').placeholder = s.adminPasswordSet ? 'задан, введите новый, чтобы сменить' : 'не задан';
+  }
 });
 
 $('settingsForm').addEventListener('submit', async e => {

@@ -189,7 +189,12 @@ func (d *vhdDisk) SetName(name string) error {
 // Boot puts the differencing disk on top of local, adds the Windows on it to
 // the boot menu of the firmware and writes the state file. Until it is done the
 // PC has no Windows to boot, so unlike MakeBootable a failure fails the deploy.
-func (d *vhdDisk) Boot(state proto.StoreState) error {
+//
+// With accounts to set up, the first boot goes straight to local instead: users
+// and passwords are changed by Windows itself, and what it writes then must stay.
+// The reset service does the accounts on that boot, then makes the differencing
+// disk, points the entry at it and restarts the PC.
+func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return errors.New("загрузочная запись VHDX работает только в WinPE")
 	}
@@ -199,10 +204,22 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 	if err := d.installReset(); err != nil {
 		return fmt.Errorf("служба сброса: %w", err)
 	}
-	if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
-		return err
+	top := proto.DiffFile
+	if accounts.Empty() {
+		if err := createVirtualDisk(storePath(proto.DiffFile), storePath(proto.LocalFile), 0, 0); err != nil {
+			return err
+		}
+	} else {
+		b, err := json.Marshal(accounts)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(storePath(proto.AccountsFile), b, 0o600); err != nil {
+			return err
+		}
+		top = proto.LocalFile
 	}
-	if err := d.attach(proto.DiffFile); err != nil {
+	if err := d.attach(top); err != nil {
 		return err
 	}
 	defer d.Close()
@@ -217,7 +234,10 @@ func (d *vhdDisk) Boot(state proto.StoreState) error {
 	if err != nil {
 		return fmt.Errorf("bcdboot: %w: %s", err, lastLine(out))
 	}
-	state.Base, state.Local, state.Diff, state.Format = proto.BaseFile, proto.LocalFile, proto.DiffFile, "vhdx"
+	state.Base, state.Local, state.Format = proto.BaseFile, proto.LocalFile, "vhdx"
+	if top == proto.DiffFile {
+		state.Diff = proto.DiffFile
+	}
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -265,6 +285,30 @@ func (d *vhdDisk) installReset() (err error) {
 		{"DisplayName", "REG_SZ", "locless-vhd: сброс разностного диска"},
 	} {
 		if err := runReg("add", key, "/v", v[0], "/t", v[1], "/d", v[2], "/f"); err != nil {
+			return err
+		}
+	}
+	return enableUAC()
+}
+
+// enableUAC turns UAC on in the Windows mounted at W:. A standard user who asks
+// for more rights gets a prompt for the name and password of an administrator on
+// the secure desktop; an administrator is asked to confirm, as Windows does by
+// default. EnableLUA takes effect at boot, and this Windows has not booted yet.
+func enableUAC() (err error) {
+	const hive = `HKLM\LOCLESSSW`
+	if err := runReg("load", hive, windowsLetter+`:\Windows\System32\config\SOFTWARE`); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, runReg("unload", hive)) }()
+	key := hive + `\Microsoft\Windows\CurrentVersion\Policies\System`
+	for _, v := range [][2]string{
+		{"EnableLUA", "1"},
+		{"ConsentPromptBehaviorUser", "1"},  // credentials, on the secure desktop
+		{"ConsentPromptBehaviorAdmin", "5"}, // consent for programs not from Windows
+		{"PromptOnSecureDesktop", "1"},
+	} {
+		if err := runReg("add", key, "/v", v[0], "/t", "REG_DWORD", "/d", v[1], "/f"); err != nil {
 			return err
 		}
 	}
@@ -344,9 +388,10 @@ func storePath(name string) string {
 
 // storeSDDL gives the store to SYSTEM: full control for it, which the boot
 // loader, the agent in WinPE and the reset service all run as, and reading for
-// administrators and signed-in users. The DACL is protected, so nothing else is
+// administrators. Players have no business reading the image or the password
+// waiting for the first boot, so other users get nothing. The DACL is protected, so nothing else is
 // inherited, and files made later get the same through OICI.
-const storeSDDL = "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FRFX;;;BA)(A;OICI;FRFX;;;AU)"
+const storeSDDL = "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FRFX;;;BA)"
 
 // protectStore replaces the owner and the whole DACL of the store root. An owner
 // may always rewrite the DACL, so the owner becomes SYSTEM too. Administrators can

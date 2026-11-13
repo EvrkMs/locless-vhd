@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"locless-vhd/agent/ui"
@@ -546,7 +547,10 @@ func (d *deployRun) pipeline(batches [][]uint32) error {
 	defer wg.Wait()
 	defer cancel()
 
-	fetched := make(chan deployBatch, 1)
+	// Batches wait here still compressed, about half the size of raw ones: a reserve
+	// for the moments the server is slow, as when its disk is busy with something
+	// else. Measured on PC08, the disk of the PC stood idle 56 s of 271 for want of it.
+	fetched := make(chan deployBatch, fetchedReserve)
 	unpacked := make(chan deployBatch, 1)
 	free := newSlabs(d.info.BlockSize)
 	wg.Go(func() { d.fetch(ctx, batches, fetched) })
@@ -586,7 +590,14 @@ type deployBatch struct {
 // fetchRequests is how many batches the agent asks for at once. With one, the
 // server read a batch, sent it and stood idle until the next request came: its
 // disk worked in bursts. Two keep it reading while the agent receives the other.
-const fetchRequests = 2
+const fetchRequests = 4
+
+// fetchedReserve is how many downloaded batches may wait for unpacking.
+const fetchedReserve = 4
+
+// writeParallel is how many blocks of a batch are written at once. A SATA disk
+// gains little from it, an NVMe one needs it to reach its speed.
+const writeParallel = 4
 
 // fetch downloads the batches, fetchRequests at a time. They arrive in any order:
 // every batch fills its own places on the disk.
@@ -724,23 +735,55 @@ func (d *deployRun) writeZero(e proto.DeployEntry, zeros []byte) error {
 	return nil
 }
 
-// store writes the checked blocks of a batch to the disk.
+// store writes the checked blocks of a batch to the disk, writeParallel at a
+// time: every block has its own place, so the order does not matter.
 func (d *deployRun) store(b deployBatch) error {
+	type place struct {
+		partition uint32
+		offset    uint64
+		raw       []byte
+	}
+	places := make([]place, len(b.numbers))
 	for i, n := range b.numbers {
 		e := d.entries[n]
-		raw := b.raw[i]
 		offset, length, err := d.place(e)
 		if err != nil {
 			return err
 		}
-		if uint64(len(raw)) != length {
-			return fmt.Errorf("блок %d раздела %d: %d байт вместо %d", e.Position, e.Partition, len(raw), length)
+		if uint64(len(b.raw[i])) != length {
+			return fmt.Errorf("блок %d раздела %d: %d байт вместо %d", e.Position, e.Partition, len(b.raw[i]), length)
 		}
-		if err := d.dst.WriteBlock(e.Partition, offset, raw); err != nil {
-			return fmt.Errorf("ошибка записи раздела %d: %w", e.Partition, err)
-		}
-		d.written += length
-		d.w.rec.Bytes("записано на диск", length)
+		places[i] = place{e.Partition, offset, b.raw[i]}
+	}
+	next := make(chan place)
+	errs := make(chan error, writeParallel)
+	var failed atomic.Bool // after an error only the writes already started finish
+	var wg sync.WaitGroup
+	for range writeParallel {
+		wg.Go(func() {
+			for p := range next {
+				if failed.Load() {
+					continue // let the sender finish
+				}
+				if err := d.dst.WriteBlock(p.partition, p.offset, p.raw); err != nil {
+					failed.Store(true)
+					errs <- fmt.Errorf("ошибка записи раздела %d: %w", p.partition, err)
+				}
+			}
+		})
+	}
+	for _, p := range places {
+		next <- p
+	}
+	close(next)
+	wg.Wait()
+	close(errs)
+	if err := <-errs; err != nil {
+		return err
+	}
+	for _, p := range places {
+		d.written += uint64(len(p.raw))
+		d.w.rec.Bytes("записано на диск", uint64(len(p.raw)))
 		d.done++
 	}
 	return d.report()

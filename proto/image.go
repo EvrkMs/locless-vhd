@@ -760,6 +760,76 @@ func (c *Chain) Stored(e Entry) (BlockHeader, []byte, error) {
 	return h, payload, nil
 }
 
+// StoredBlock is a block as it is stored, header and payload.
+type StoredBlock struct {
+	Header  BlockHeader
+	Payload []byte
+}
+
+// StoredRun reads the stored blocks of entries that lie one right after another
+// in the same file with a single read of at most maxBytes, and returns them in
+// order. It reads at least the first entry, so a caller loops over the rest. One
+// large read instead of many small ones is what a hard disk, or a disk busy with
+// other work, needs to keep up.
+func (c *Chain) StoredRun(entries []Entry, maxBytes uint64) ([]StoredBlock, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	first := entries[0]
+	single := func() ([]StoredBlock, error) {
+		h, payload, err := c.Stored(first)
+		if err != nil {
+			return nil, err
+		}
+		return []StoredBlock{{h, payload}}, nil
+	}
+	if first.Zero() || int(first.Level) >= len(c.files) {
+		return single()
+	}
+	ends := c.blockEnds()[first.Level]
+	// A block counts only if its end is known and close, as in Stored: a longer
+	// gap holds blocks the index no longer uses.
+	whole := func(e Entry) (uint64, bool) {
+		end := ends[e.Offset]
+		return end, end > e.Offset+BlockHeaderSize && end-e.Offset <= BlockHeaderSize+uint64(c.BlockSize())
+	}
+	end, ok := whole(first)
+	if !ok {
+		return single()
+	}
+	n := 1
+	for ; n < len(entries); n++ {
+		e := entries[n]
+		if e.Zero() || e.Level != first.Level || e.Offset != end {
+			break
+		}
+		next, ok := whole(e)
+		if !ok || next-first.Offset > maxBytes {
+			break
+		}
+		end = next
+	}
+	b := make([]byte, end-first.Offset)
+	if _, err := c.files[first.Level].r.ReadAt(b, int64(first.Offset)); err != nil {
+		return nil, err
+	}
+	blocks := make([]StoredBlock, n)
+	for i, e := range entries[:n] {
+		at := e.Offset - first.Offset
+		limit, _ := whole(e)
+		limit -= first.Offset
+		h, err := c.checkStored(e, b[at:at+BlockHeaderSize])
+		if err != nil {
+			return nil, err
+		}
+		if at+BlockHeaderSize+uint64(h.Stored) > limit {
+			return nil, fmt.Errorf("%w: block runs into the next one", ErrCorrupt)
+		}
+		blocks[i] = StoredBlock{h, b[at+BlockHeaderSize : at+BlockHeaderSize+uint64(h.Stored)]}
+	}
+	return blocks, nil
+}
+
 func (c *Chain) checkStored(e Entry, hb []byte) (BlockHeader, error) {
 	h, err := ParseBlockHeader(hb)
 	if err != nil {

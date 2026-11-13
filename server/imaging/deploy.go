@@ -117,6 +117,9 @@ func (m *Manager) DeployList(task int64, w io.Writer) error {
 // request: enough to keep both busy, little enough to cost a few megabytes.
 const readAhead = 8
 
+// readRun limits one read of blocks lying next to each other in the image file.
+const readRun = 8 << 20
+
 // storedBlock is a block read for sending, or the error that stopped reading.
 type storedBlock struct {
 	header  proto.BlockHeader
@@ -157,18 +160,32 @@ func (m *Manager) DeployBlocks(task int64, numbers []uint32, w io.Writer) error 
 	go func() {
 		var spent time.Duration
 		defer func() { close(blocks); done <- spent }()
-		for _, n := range numbers {
+		// Neighbouring numbers are usually neighbouring blocks of the file, read
+		// with one request of up to readRun instead of one each.
+		look := make([]proto.Entry, 0, 64)
+		for i := 0; i < len(numbers); {
+			look = look[:0]
+			for _, n := range numbers[i:min(len(numbers), i+cap(look))] {
+				look = append(look, s.entries[n])
+			}
 			at := time.Now()
-			h, payload, err := s.chain.Stored(s.entries[n])
+			run, err := s.chain.StoredRun(look, readRun)
 			spent += time.Since(at)
-			select {
-			case blocks <- storedBlock{h, payload, err}:
-			case <-stop:
-				return
-			}
 			if err != nil {
+				select {
+				case blocks <- storedBlock{err: err}:
+				case <-stop:
+				}
 				return
 			}
+			for _, b := range run {
+				select {
+				case blocks <- storedBlock{header: b.Header, payload: b.Payload}:
+				case <-stop:
+					return
+				}
+			}
+			i += len(run)
 		}
 	}()
 

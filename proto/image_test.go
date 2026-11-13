@@ -583,3 +583,58 @@ func TestLayerIsInTheFile(t *testing.T) {
 		t.Fatalf("layer %d", f.Layer())
 	}
 }
+
+// TestStoredRunMatchesStored: blocks read together are the same as read one by
+// one, a run stops at a block of another file or a gap, and at maxBytes.
+func TestStoredRunMatchesStored(t *testing.T) {
+	d := disk{}
+	for pos := range uint32(12) {
+		d[pos] = noise(uint64(pos)+1, testBlock)
+	}
+	f1, _ := base(t, d)
+	d2 := disk{}
+	for pos, raw := range d {
+		d2[pos] = raw
+	}
+	d2[5] = noise(99, testBlock) // this block now lives in the delta
+	f2, _ := delta(t, f1, d2)
+	c := chain(t, f1, f2)
+
+	var entries []Entry
+	for _, e := range c.Index().Entries {
+		if !e.Zero() {
+			entries = append(entries, e)
+		}
+	}
+	for _, max := range []uint64{1, testBlock * 3, 1 << 40} {
+		got := 0
+		runs := 0
+		for i := 0; i < len(entries); {
+			blocks, err := c.StoredRun(entries[i:], max)
+			if err != nil || len(blocks) == 0 {
+				t.Fatalf("max %d at %d: %d blocks, %v", max, i, len(blocks), err)
+			}
+			for j, b := range blocks {
+				h, payload, err := c.Stored(entries[i+j])
+				if err != nil || h != b.Header || !bytes.Equal(payload, b.Payload) {
+					t.Fatalf("max %d, entry %d differs: %v", max, i+j, err)
+				}
+				if entries[i+j].Level != entries[i].Level {
+					t.Fatalf("a run crossed files at %d", i+j)
+				}
+			}
+			i += len(blocks)
+			got += len(blocks)
+			runs++
+		}
+		if got != len(entries) {
+			t.Fatalf("max %d: %d of %d blocks", max, got, len(entries))
+		}
+		if max == 1 && runs != len(entries) {
+			t.Fatalf("max 1 joined blocks: %d runs for %d", runs, len(entries))
+		}
+		if max == 1<<40 && runs >= len(entries) {
+			t.Fatalf("nothing was joined: %d runs for %d blocks", runs, len(entries))
+		}
+	}
+}

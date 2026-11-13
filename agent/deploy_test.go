@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 // fakeTarget is a disk that records what the agent does to it.
 type fakeTarget struct {
+	mu        sync.Mutex
 	blocks    map[uint64][]byte // partition 3, by offset
 	checkErr  error
 	prepared  bool
@@ -62,6 +64,8 @@ func (d *fakeTarget) SetName(name string) error {
 }
 
 func (d *fakeTarget) WriteBlock(partition uint32, offset uint64, data []byte) error {
+	d.mu.Lock() // the deploy writes several blocks at once
+	defer d.mu.Unlock()
 	if !d.prepared {
 		return errors.New("write before Prepare")
 	}
@@ -191,7 +195,9 @@ func TestWriteErrorStopsThePipeline(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "диск отвалился") {
 		t.Fatalf("got %v", err)
 	}
-	if d.writes != cloneBatch+2 || d.finished {
+	// Blocks are written writeParallel at a time: those already started when the
+	// write failed may finish, and nothing after them.
+	if d.writes < cloneBatch+2 || d.writes > cloneBatch+1+writeParallel || d.finished {
 		t.Fatalf("writes %d, finished %v", d.writes, d.finished)
 	}
 }

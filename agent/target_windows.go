@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -62,6 +63,8 @@ type writeDisk struct {
 	allowFormat bool                // tests on a VHD; otherwise only WinPE may format
 	parts       map[uint32]*os.File // partitions kept locked while the disk is written
 	disk        *os.File            // writes go here, past the size Windows remembers for a partition
+	more        []*os.File          // more handles to the disk: Windows runs the I/O of one handle in turn
+	nextHandle  atomic.Uint32       // spreads the writes over disk and more
 	offsets     map[uint32]uint64   // where each partition starts on this disk
 }
 
@@ -396,6 +399,15 @@ func (w *writeDisk) Prepare(m proto.Manifest) error {
 		return err
 	}
 	w.disk = os.NewFile(uintptr(h), fmt.Sprintf("PhysicalDrive%d", w.number))
+	// A handle opened for synchronous I/O, as these are, serves one request at a
+	// time; a deploy writes several blocks at once, so each gets its own.
+	for range writeParallel - 1 {
+		h, err := openWritable(fmt.Sprintf(`\\.\PhysicalDrive%d`, w.number))
+		if err != nil {
+			break // fewer handles only cost speed
+		}
+		w.more = append(w.more, os.NewFile(uintptr(h), fmt.Sprintf("PhysicalDrive%d", w.number)))
+	}
 	for _, p := range m.Partitions {
 		w.offsets[p.Number] = p.Offset
 	}
@@ -511,7 +523,11 @@ func (w *writeDisk) WriteBlock(partition uint32, offset uint64, data []byte) err
 	if w.parts[partition] == nil || w.disk == nil {
 		return fmt.Errorf("раздел %d не подготовлен", partition)
 	}
-	_, err := w.disk.WriteAt(data, int64(w.offsets[partition]+offset))
+	f := w.disk
+	if n := w.nextHandle.Add(1) % uint32(len(w.more)+1); n > 0 {
+		f = w.more[n-1]
+	}
+	_, err := f.WriteAt(data, int64(w.offsets[partition]+offset))
 	return err
 }
 
@@ -520,7 +536,11 @@ func (w *writeDisk) Finish() error {
 	if w.disk == nil {
 		return errors.New("диск не подготовлен")
 	}
-	return w.disk.Sync()
+	errs := []error{w.disk.Sync()}
+	for _, f := range w.more {
+		errs = append(errs, f.Sync())
+	}
+	return errors.Join(errs...)
 }
 
 // windowsLetter is where MakeBootable mounts the Windows partition.
@@ -611,6 +631,10 @@ func lastLine(out []byte) string {
 
 func (w *writeDisk) Close() error {
 	var errs []error
+	for _, f := range w.more {
+		errs = append(errs, f.Close())
+	}
+	w.more = nil
 	if w.disk != nil {
 		errs = append(errs, w.disk.Close())
 		w.disk = nil

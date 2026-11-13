@@ -97,7 +97,7 @@ func resetDiff(ops resetOps) (string, error) {
 	}
 	parent := st.Local
 	if parent == "" {
-		parent = st.Base // a deploy from before local.avhdx
+		parent = st.Base // a deploy from before local.vhdx
 	}
 	if err := ops.CreateDiff(next, parent); err != nil {
 		return "", fmt.Errorf("создание %s: %w", next, err)

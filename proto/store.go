@@ -113,10 +113,13 @@ func alignUp(n, to uint64) uint64 {
 
 // Files on the store.
 const (
-	BaseFile  = "base.vhdx"    // the image, block for block as on the server
-	LocalFile = "local.avhdx"  // on top of the base: what belongs to this PC only
-	DiffFile  = "diff-a.avhdx" // on top of local: the differencing disk Windows boots from
-	DiffFileB = "diff-b.avhdx" // its pair: the reset prepares one while Windows runs on the other
+	BaseFile = "base.vhdx" // the image, block for block as on the server
+	// The differencing disks end in .vhdx, not .avhdx as Hyper-V names them: the
+	// boot loader tells the format by the extension and reads anything that is not
+	// .vhdx as an old VHD, which fails with 0xc03a0001 (no VHD footer).
+	LocalFile = "local.vhdx"  // on top of the base: what belongs to this PC only
+	DiffFile  = "diff-a.vhdx" // on top of local: the differencing disk Windows boots from
+	DiffFileB = "diff-b.vhdx" // its pair: the reset prepares one while Windows runs on the other
 	StateFile = "locless-vhd.json"
 	ResetLog  = "reset.log" // what the reset service did, on the store so a reset keeps it
 	// AccountsFile asks the first boot after a deploy to set up the accounts. It
@@ -148,6 +151,10 @@ func ValidUserName(name string) bool {
 	return !strings.ContainsAny(name, `"/\[]:;|=,+*?<>@`)
 }
 
+// OldFiles are names of the files above in earlier deploys, which a deploy
+// removes along with the current ones.
+var OldFiles = []string{"local.avhdx", "diff-a.avhdx", "diff-b.avhdx"}
+
 // OtherDiff returns the differencing disk paired with name.
 func OtherDiff(name string) string {
 	if name == DiffFileB {
@@ -160,7 +167,7 @@ func OtherDiff(name string) string {
 // Windows keeps there when it boots from a virtual disk.
 const StoreSpare = 4 << 30
 
-// LocalSpare is room for local.avhdx. Only the agent writes into it, a little:
+// LocalSpare is room for local.vhdx. Only the agent writes into it, a little:
 // the stretched volume and the name and service of the PC.
 const LocalSpare = 1 << 30
 

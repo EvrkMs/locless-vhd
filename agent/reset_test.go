@@ -135,7 +135,7 @@ func TestResetNeedsAVHDXDeploy(t *testing.T) {
 	}
 }
 
-// TestResetOfAnOldDeploy: a store from before local.avhdx keeps its diffs on the base.
+// TestResetOfAnOldDeploy: a store from before local.vhdx keeps its diffs on the base.
 func TestResetOfAnOldDeploy(t *testing.T) {
 	s := newFakeStore(proto.DiffFile, proto.DiffFile)
 	s.state.Local = ""

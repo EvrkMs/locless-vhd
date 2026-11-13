@@ -99,7 +99,8 @@ func (d *vhdDisk) Prepare(m proto.Manifest) error {
 	if err := protectStore(storeLetter + `:\`); err != nil {
 		return fmt.Errorf("права на хранилище: %w", err)
 	}
-	for _, name := range []string{proto.StateFile, proto.DiffFile, proto.DiffFileB, proto.LocalFile, proto.BaseFile} {
+	names := append([]string{proto.StateFile, proto.AccountsFile, proto.DiffFile, proto.DiffFileB, proto.LocalFile}, proto.OldFiles...)
+	for _, name := range append(names, proto.BaseFile) {
 		if err := os.Remove(storePath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("старый файл %s: %w", name, err)
 		}
@@ -326,7 +327,7 @@ func copyFile(from, to string) error {
 	return os.WriteFile(to, b, 0o755)
 }
 
-// ensureLocal makes local.avhdx on top of the base once per deploy: Prepare
+// ensureLocal makes local.vhdx on top of the base once per deploy: Prepare
 // removed the one of the deploy before.
 func (d *vhdDisk) ensureLocal() error {
 	if _, err := os.Stat(storePath(proto.LocalFile)); err == nil {

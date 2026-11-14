@@ -40,7 +40,8 @@ func runReset() error {
 
 type resetService struct{}
 
-// Execute does the reset once and stops: there is nothing to do until the next boot.
+// Execute does the reset once, then watches the free space of the store until
+// Windows shuts down.
 func (resetService) Execute(_ []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
 	done := make(chan error, 1)
@@ -48,17 +49,21 @@ func (resetService) Execute(_ []string, requests <-chan svc.ChangeRequest, statu
 		_, err := resetOnce()
 		done <- err
 	}()
+	stop := make(chan struct{})
+	defer close(stop)
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {
 		case err := <-done:
-			status <- svc.Status{State: svc.StopPending}
 			// Save Mode puts the service into the image itself, so a deploy onto a
 			// plain disk brings it along: there it has nothing to do.
-			if err != nil && !errors.Is(err, errNoStore) {
-				return true, 1
+			if errors.Is(err, errNoStore) {
+				status <- svc.Status{State: svc.StopPending}
+				return false, 0
 			}
-			return false, 0
+			// A failed reset is in the log on the store; the space is worth watching
+			// all the same.
+			go watchSpace(stop)
 		case r := <-requests:
 			switch r.Cmd {
 			case svc.Interrogate:

@@ -94,7 +94,8 @@ func (m *Manager) StartDeploy(ctx context.Context, task int64, image string) (pr
 
 	last := versions[len(versions)-1]
 	m.log.Info("deploy started", "task", task, "image", image, "version", last.Number, "blocks", len(s.entries))
-	return proto.DeployInfo{BlockSize: s.chain.BlockSize(), Image: image, Version: last.Number, Manifest: index.Manifest}, nil
+	return proto.DeployInfo{BlockSize: s.chain.BlockSize(), Image: image, Version: last.Number, Manifest: index.Manifest,
+		ID: index.Chain[len(index.Chain)-1].String()}, nil
 }
 
 func (m *Manager) deploy(task int64) (*deploySession, error) {

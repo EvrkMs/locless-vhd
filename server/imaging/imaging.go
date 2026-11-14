@@ -168,15 +168,17 @@ func (m *Manager) claim(ctx context.Context, task int64, image string) error {
 // Start begins a clone. A clone already running for the task is dropped: the
 // agent started over, for example after the operator pressed retry.
 func (m *Manager) Start(ctx context.Context, task int64, image, mac string) (proto.CloneInfo, error) {
-	return m.StartOn(ctx, task, image, mac, 0)
+	return m.StartOn(ctx, task, image, mac, 0, "")
 }
 
 // StartOn begins a clone of a disk that is version base with changes on top, as
-// in Save Mode. If base is the newest version, the answer says Partial: the agent
-// sends only the places that changed, and every other place keeps what base
-// has. Otherwise, or with base 0, the clone is whole as always: inheriting from
-// another version than the disk holds would give the image places it never had.
-func (m *Manager) StartOn(ctx context.Context, task int64, image, mac string, base int) (proto.CloneInfo, error) {
+// in Save Mode. If base is the newest version and its newest file is baseID, the
+// answer says Partial: the agent sends only the places that changed, and every
+// other place keeps what base has. The number alone is not enough: a deleted
+// version gives its number to the next clone, of another disk. Otherwise, or
+// with base 0, the clone is whole as always: inheriting from another version
+// than the disk holds would give the image places it never had.
+func (m *Manager) StartOn(ctx context.Context, task int64, image, mac string, base int, baseID string) (proto.CloneInfo, error) {
 	if !proto.ValidImageName(image) {
 		return proto.CloneInfo{}, fmt.Errorf("imaging: bad image name %q", image)
 	}
@@ -254,7 +256,7 @@ func (m *Manager) StartOn(ctx context.Context, task int64, image, mac string, ba
 		image: image, mac: mac, dir: dir, number: number, parent: parentNumber,
 		name: "v" + strconv.Itoa(number) + ext,
 		path: path, file: file, buf: buf, writer: writer,
-		partial: base > 0 && latest != nil && latest.Number == base,
+		partial: base > 0 && latest != nil && latest.Number == base && baseID != "" && parent.Header.ID.String() == baseID,
 	}
 	s.touch()
 	m.sessions[task] = s

@@ -227,6 +227,9 @@ func AutoVHDSize(store, memory uint64) uint64 {
 type StoreState struct {
 	Image   string `json:"image"`
 	Version int    `json:"version"`
+	// BaseID is DeployInfo.ID of the version in the base: the number alone can
+	// name another disk after the version was deleted and the number reused.
+	BaseID  string `json:"baseId,omitempty"`
 	Format  string `json:"format"` // "vhdx"
 	VHDSize uint64 `json:"vhdSize"`
 	Base    string `json:"base"`

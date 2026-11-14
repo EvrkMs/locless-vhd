@@ -192,7 +192,7 @@ func (w *worker) runSaveImage(task *proto.AgentTask) error {
 
 	var m proto.Manifest
 	err = recovery.Run(func() (err error) {
-		m, err = w.captureOn(task, src, st.Version, changes)
+		m, err = w.captureOn(task, src, st.Version, st.BaseID, changes)
 		return err
 	})
 	if err != nil && !errors.Is(err, errTaskGone) {

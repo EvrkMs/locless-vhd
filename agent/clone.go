@@ -186,18 +186,22 @@ func (w *worker) runClone(task *proto.AgentTask) error {
 // capture sends the disk to the server and returns the table the image was taken
 // with, which is the shrunk one.
 func (w *worker) capture(task *proto.AgentTask, src source) (proto.Manifest, error) {
-	return w.captureOn(task, src, 0, nil)
+	return w.captureOn(task, src, 0, "", nil)
 }
 
-// captureOn is capture of a disk that is version base with changes on top. When
-// the server agrees to build on base, only the places changes gives are read; the
-// server keeps the rest from base. Otherwise the whole disk is read as always.
-func (w *worker) captureOn(task *proto.AgentTask, src source, base int, changes func(blockSize uint32) map[uint32]map[uint32]bool) (proto.Manifest, error) {
+// captureOn is capture of a disk that is version base, its file named baseID,
+// with changes on top. When the server agrees to build on base, only the places
+// changes gives are read; the server keeps the rest from base. Otherwise the
+// whole disk is read as always. Without baseID, from a deploy older than it, the
+// base cannot be told from another disk that got the same number, so the clone is
+// whole too.
+func (w *worker) captureOn(task *proto.AgentTask, src source, base int, baseID string,
+	changes func(blockSize uint32) map[uint32]map[uint32]bool) (proto.Manifest, error) {
 	w.rec.Step("Чтение диска и отправка")
-	if changes == nil {
+	if changes == nil || baseID == "" {
 		base = 0
 	}
-	info, err := w.client.cloneStartOn(task.ID, base)
+	info, err := w.client.cloneStartOn(task.ID, base, baseID)
 	if errors.Is(err, errTaskGone) {
 		return proto.Manifest{}, err
 	}

@@ -173,7 +173,8 @@ func (w *worker) runDeployVHD(task *proto.AgentTask) error {
 		return vt, err
 	}
 	boot := func(info proto.DeployInfo) error {
-		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, VHDSize: vt.VHDSize(), Written: time.Now()}, task.Accounts)
+		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, BaseID: info.ID, VHDSize: vt.VHDSize(),
+			Written: time.Now()}, task.Accounts)
 	}
 	return w.deployInto(task, "Развёртывание в VHDX", open, boot)
 }

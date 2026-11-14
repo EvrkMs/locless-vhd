@@ -186,7 +186,7 @@ func ReadVHDXLayout(r io.ReaderAt) (VHDXLayout, error) {
 	if err != nil {
 		return l, err
 	}
-	if string(meta[:8]) != "metadata" {
+	if len(meta) < 32 || string(meta[:8]) != "metadata" {
 		return l, errors.New("proto: VHDX metadata without its signature")
 	}
 	items := binary.LittleEndian.Uint16(meta[10:])

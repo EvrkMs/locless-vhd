@@ -5,6 +5,8 @@ import (
 	"errors"
 	"maps"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -151,6 +153,39 @@ func savedOver(t *testing.T, e *cloneEnv) (map[uint32][]byte, *fakeDisk, *proto.
 	return saved, &fakeDisk{blocks: saved, size: size}, layout
 }
 
+// fileID is the ID of an image file on the server, what a deploy of it records.
+func (e *cloneEnv) fileID(t *testing.T, name string) string {
+	t.Helper()
+	f, err := os.Open(filepath.Join(e.images, "win11", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, _ := f.Stat()
+	pf, err := proto.OpenFile(f, info.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pf.Header.ID.String()
+}
+
+// TestSaveImageOverAReusedNumber: v1 was deleted and remade from another disk.
+// The number matches, the file does not, so nothing is inherited.
+func TestSaveImageOverAReusedNumber(t *testing.T) {
+	e := newCloneEnv(t)
+	saved, disk, layout := savedOver(t, e)
+	s := savingStore("win11", disk)
+	s.layout = layout
+	s.state.BaseID = proto.NewID().String() // the file the PC got is gone
+	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if len(disk.reads) != 40 {
+		t.Fatalf("read %d places, want all 40", len(disk.reads))
+	}
+	sameBlocks(t, e.restore(t, "v1.ldisk", "v2.ldelta"), saved)
+}
+
 // TestSaveImageReadsOnlyTheChanges: the BAT of save.vhdx names the two blocks
 // that changed, the server keeps the rest from v1, and v2 is the whole disk.
 func TestSaveImageReadsOnlyTheChanges(t *testing.T) {
@@ -158,6 +193,7 @@ func TestSaveImageReadsOnlyTheChanges(t *testing.T) {
 	saved, disk, layout := savedOver(t, e)
 	s := savingStore("win11", disk)
 	s.layout = layout
+	s.state.BaseID = e.fileID(t, "v1.ldisk")
 	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
 		t.Fatalf("attempt: %v", err)
 	}
@@ -181,6 +217,7 @@ func TestSaveImageOverAnOlderVersion(t *testing.T) {
 
 	s := savingStore("win11", disk) // the base is v1
 	s.layout = layout
+	s.state.BaseID = e.fileID(t, "v1.ldisk")
 	if _, err := e.runSave(t, store.TaskSaveImage, "win11", s); err != nil {
 		t.Fatalf("attempt: %v", err)
 	}

@@ -80,6 +80,23 @@ func TestVHDXRefusesWhatItCannotTrust(t *testing.T) {
 	if _, err := ReadVHDXLayout(bytes.NewReader(good[:vhdxRegions1])); err == nil {
 		t.Fatal("a cut file was accepted")
 	}
+
+	// A metadata region of 8 bytes, with valid checksums: an error, no panic.
+	b = bytes.Clone(good)
+	for _, off := range []int{vhdxRegions1, vhdxRegions2} {
+		table := b[off : off+vhdxRegionSz]
+		for i := range binary.LittleEndian.Uint32(table[8:]) {
+			e := table[16+32*i:]
+			if bytes.Equal(e[:16], guidMetadata[:]) {
+				binary.LittleEndian.PutUint32(e[24:], 8)
+			}
+		}
+		binary.LittleEndian.PutUint32(table[4:], 0)
+		binary.LittleEndian.PutUint32(table[4:], crc32.Checksum(table, crc32c))
+	}
+	if _, err := ReadVHDXLayout(bytes.NewReader(b)); err == nil {
+		t.Fatal("a metadata region of 8 bytes was accepted")
+	}
 }
 
 // TestChangedPlaces: VHDX blocks of 2 MiB over image blocks of 1 MiB, with a

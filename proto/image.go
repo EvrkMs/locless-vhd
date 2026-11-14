@@ -36,6 +36,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,6 +110,9 @@ const (
 
 // ID identifies one image file.
 type ID [16]byte
+
+// String is the ID in hex, how it travels in JSON and URLs.
+func (id ID) String() string { return hex.EncodeToString(id[:]) }
 
 // NewID returns a random ID.
 func NewID() ID {

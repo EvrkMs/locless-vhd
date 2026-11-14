@@ -19,6 +19,9 @@ type DeployInfo struct {
 	Image     string   `json:"image"`
 	Version   int      `json:"version"`
 	Manifest  Manifest `json:"manifest"`
+	// ID names the newest file of the chain. Version numbers come back after a
+	// version is deleted; the ID of a file is random and never does.
+	ID string `json:"id,omitempty"`
 }
 
 // DeployEntry is one place of the disk to write. Its number in the list is how

@@ -403,6 +403,66 @@ func TestInheritFillsWhatWasNotRead(t *testing.T) {
 	}
 }
 
+// TestInheritFollowsTheGUID: the parent has Windows as partition 3, the new table
+// numbers it 2 and gives 3 to another partition. The places go with the GUID.
+func TestInheritFollowsTheGUID(t *testing.T) {
+	v1 := disk{0: noise(1, testBlock), 1: noise(2, testBlock), 2: noise(3, testBlock)}
+	f1, _ := base(t, v1) // partition 3, GUID testGUID
+
+	const otherGUID = "aaaaaaaa-0000-4000-8000-000000000009"
+	m := imageManifest()
+	m.Partitions = []Partition{
+		{Number: 1, TypeGUID: testGUID, GUID: otherGUID, Offset: 1 * mib, Size: 1 * mib, Policy: PolicyFixed, Content: ContentBlocks},
+		{Number: 2, TypeGUID: testGUID, GUID: strings.ToUpper(testGUID), Offset: 2 * mib, Size: 8*mib + 512, Policy: PolicyFill, Content: ContentBlocks},
+	}
+	var out bytes.Buffer
+	h := Header{Kind: KindDelta, BlockSize: testBlock, ID: NewID(), Parent: f1.Header.ID, ParentSum: f1.Sum}
+	w, err := NewWriter(&out, h, f1.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := noise(9, testBlock)
+	if err := w.Add(2, 1, changed); err != nil { // the agent sends with the new numbers
+		t.Fatal(err)
+	}
+	if err := w.Inherit(m); err != nil {
+		t.Fatalf("Inherit: %v", err)
+	}
+	if _, err := w.Close(m); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	f2, err := OpenFile(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := chain(t, f1, f2)
+	got := map[[2]uint32][]byte{}
+	for _, e := range c.Index().Entries {
+		raw, err := c.Read(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[[2]uint32{e.Partition, e.Position}] = raw
+	}
+	want := map[[2]uint32][]byte{{2, 0}: v1[0], {2, 1}: changed, {2, 2}: v1[2]}
+	if len(got) != len(want) {
+		t.Fatalf("%d places, want %d: partition 1 must get nothing", len(got), len(want))
+	}
+	for key, raw := range want {
+		if !bytes.Equal(got[key], raw) {
+			t.Fatalf("place %v differs", key)
+		}
+	}
+
+	// The partition of the parent is gone from the new table: an error, no loss.
+	lost := imageManifest()
+	lost.Partitions[1].GUID = otherGUID
+	w, _ = NewWriter(&bytes.Buffer{}, Header{Kind: KindDelta, BlockSize: testBlock, ID: NewID(), Parent: f1.Header.ID, ParentSum: f1.Sum}, f1.Index)
+	if err := w.Inherit(lost); err == nil {
+		t.Fatal("a partition of the parent vanished without an error")
+	}
+}
+
 func TestLongChainReadsFromEveryLevel(t *testing.T) {
 	d := disk{0: noise(1, testBlock), 1: noise(2, testBlock), 2: noise(3, testBlock)}
 	f1, _ := base(t, d)

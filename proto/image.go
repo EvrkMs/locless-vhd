@@ -42,6 +42,7 @@ import (
 	"hash/crc32"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
@@ -558,25 +559,52 @@ func (w *Writer) Add(partition, position uint32, raw []byte) error {
 // disk was read only where it changed since the parent, so everywhere else it
 // still is the parent. Places outside what m stores, a volume shrunk below them
 // for one, are dropped. It runs once, right before Close.
+//
+// Partitions are matched by their GUID. Their numbers can differ: a deploy
+// numbers them in table order, while the parent kept the numbers of the disk it
+// was cloned from. A partition of the parent with content and no partner in m
+// is an error, as the new version would lose its data without a word.
 func (w *Writer) Inherit(m Manifest) error {
 	if w.parent == nil {
 		return errors.New("proto: only a delta inherits")
 	}
-	blocks := map[uint32]uint64{}
+	type target struct {
+		number uint32
+		blocks uint64
+	}
+	byGUID := map[string]target{}
 	for _, p := range m.Partitions {
-		if p.Content == ContentBlocks {
-			blocks[p.Number] = (p.Size + uint64(w.header.BlockSize) - 1) / uint64(w.header.BlockSize)
+		if p.Content != ContentBlocks {
+			continue
 		}
+		guid := strings.ToLower(p.GUID)
+		if _, dup := byGUID[guid]; dup || guid == "" {
+			return fmt.Errorf("proto: partition %d has no unique GUID to inherit by", p.Number)
+		}
+		byGUID[guid] = target{p.Number, (p.Size + uint64(w.header.BlockSize) - 1) / uint64(w.header.BlockSize)}
+	}
+	moved := map[uint32]target{} // number in the parent → partition in m
+	for _, p := range w.parent.Manifest.Partitions {
+		if p.Content != ContentBlocks {
+			continue
+		}
+		t, ok := byGUID[strings.ToLower(p.GUID)]
+		if !ok {
+			return fmt.Errorf("proto: partition %d (%s) of the parent is not in the new table", p.Number, p.GUID)
+		}
+		moved[p.Number] = t
 	}
 	for _, e := range w.parent.Entries {
-		key := [2]uint32{e.Partition, e.Position}
+		t, ok := moved[e.Partition]
+		if !ok || uint64(e.Position) >= t.blocks {
+			continue
+		}
+		key := [2]uint32{t.number, e.Position}
 		if w.seen[key] {
 			continue
 		}
-		if n, ok := blocks[e.Partition]; !ok || uint64(e.Position) >= n {
-			continue
-		}
 		w.seen[key] = true
+		e.Partition = t.number
 		w.index = append(w.index, e)
 	}
 	return nil

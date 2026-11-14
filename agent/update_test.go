@@ -52,7 +52,7 @@ func (e *cloneEnv) deployVHDTarget(t *testing.T, v vhdTarget) error {
 		t.Fatalf("QueueTask: %v", err)
 	}
 	w, _ := testWorker(e.url)
-	w.openVHD = func(uint64) (vhdTarget, error) { return v, nil }
+	w.openVHD = func(uint64, uint64) (vhdTarget, error) { return v, nil }
 	return w.attempt()
 }
 

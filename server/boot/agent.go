@@ -35,6 +35,7 @@ type AgentStore interface {
 	SaveMetrics(ctx context.Context, mac net.HardwareAddr, id int64, metrics string) error
 	TaskInfo(ctx context.Context, id int64) (store.HostTask, error)
 	ImageVHDSize(ctx context.Context, image string) (uint64, error)
+	ImageKeep(ctx context.Context, image string) (proto.Keep, error)
 	Setting(ctx context.Context, key string) (string, error)
 }
 
@@ -128,6 +129,16 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 			if out.Accounts, err = accounts(r.Context(), c.Agent); err != nil {
 				internalError(w, c, err)
 				return
+			}
+			if task.Image != "" {
+				keep, err := c.Agent.ImageKeep(r.Context(), task.Image)
+				if err != nil && !errors.Is(err, store.ErrNotFound) {
+					internalError(w, c, err)
+					return
+				}
+				if err == nil {
+					out.Keep = &keep
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, out)

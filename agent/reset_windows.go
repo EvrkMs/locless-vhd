@@ -97,6 +97,13 @@ func resetOnce() (string, error) {
 		line = "ошибка: " + err.Error()
 	}
 	ops.log(line)
+	// keep.vhdx is attached while the store has its letter: the path is opened
+	// once and stays open. In Save Mode the junctions would go into the image.
+	if st, stErr := ops.ReadState(); stErr == nil && st.Save == "" {
+		if keep := setupKeep(ops); keep != "" {
+			ops.log(keep)
+		}
+	}
 	return said, err
 }
 
@@ -106,6 +113,16 @@ var errNoStore = errors.New("хранилище не найдено")
 // findStoreVolume finds the store by its label, without a letter: the partition
 // attribute keeps Windows from giving it one.
 func findStoreVolume() (string, error) {
+	volume, err := findVolume(proto.StoreLabel)
+	if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return "", fmt.Errorf("%w: тома %s нет", errNoStore, proto.StoreLabel)
+	}
+	return volume, err
+}
+
+// findVolume finds a volume by its label, letter or not. It returns
+// ERROR_NO_MORE_FILES if there is none.
+func findVolume(want string) (string, error) {
 	buf := make([]uint16, windows.MAX_PATH)
 	h, err := windows.FindFirstVolume(&buf[0], uint32(len(buf)))
 	if err != nil {
@@ -116,13 +133,10 @@ func findStoreVolume() (string, error) {
 		volume := windows.UTF16ToString(buf)
 		label := make([]uint16, windows.MAX_PATH)
 		if windows.GetVolumeInformation(windows.StringToUTF16Ptr(volume), &label[0], uint32(len(label)),
-			nil, nil, nil, nil, 0) == nil && windows.UTF16ToString(label) == proto.StoreLabel {
+			nil, nil, nil, nil, 0) == nil && windows.UTF16ToString(label) == want {
 			return volume, nil
 		}
 		if err := windows.FindNextVolume(h, &buf[0], uint32(len(buf))); err != nil {
-			if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-				return "", fmt.Errorf("%w: тома %s нет", errNoStore, proto.StoreLabel)
-			}
 			return "", err
 		}
 	}

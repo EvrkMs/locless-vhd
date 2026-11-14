@@ -651,12 +651,15 @@ type fakeVHD struct {
 	*fakeTarget
 	state    *proto.StoreState
 	accounts *proto.Accounts
+	keep     *proto.Keep
 	bootErr  error
 }
 
 func (v *fakeVHD) VHDSize() uint64 { return 100 << 30 }
 
-func (v *fakeVHD) Boot(state proto.StoreState, accounts *proto.Accounts) error {
+func (v *fakeVHD) Boot(state proto.StoreState, setup playerSetup) error {
+	accounts := setup.Accounts
+	v.keep = setup.Keep
 	if v.name == "" {
 		return errors.New("boot before the name was written into the base")
 	}
@@ -671,7 +674,7 @@ func (e *cloneEnv) deployVHD(t *testing.T, v *fakeVHD) (*worker, uint64, error) 
 	}
 	w, _ := testWorker(e.url)
 	var size uint64
-	w.openVHD = func(s uint64) (vhdTarget, error) { size = s; return v, nil }
+	w.openVHD = func(s, _ uint64) (vhdTarget, error) { size = s; return v, nil }
 	return w, size, w.attempt()
 }
 
@@ -689,6 +692,9 @@ func TestDeployVHDWritesTheBaseAndBoots(t *testing.T) {
 	w, size, err := e.deployVHD(t, v)
 	if err != nil {
 		t.Fatalf("attempt: %v", err)
+	}
+	if v.keep == nil || v.keep.Size != proto.DefaultKeepSize || len(v.keep.Folders) != len(proto.DefaultKeepFolders) {
+		t.Fatalf("keep: %+v", v.keep)
 	}
 	if v.accounts == nil || v.accounts.AdminPassword != "secret" || v.accounts.PlayerUser != "Player" {
 		t.Fatalf("accounts: %+v", v.accounts)

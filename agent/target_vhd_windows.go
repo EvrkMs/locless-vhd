@@ -31,11 +31,12 @@ type vhdDisk struct {
 	store    uint64 // size of the store partition, now or once laid out
 	inner    *writeDisk
 	attached *attachedDisk
+	keep     uint64 // room keep.vhdx takes on the store
 }
 
 // openVHDTarget picks the physical disk the same way as a deploy and plans the
 // virtual disk on it. It changes nothing.
-func openVHDTarget(size uint64) (vhdTarget, error) {
+func openVHDTarget(size, keep uint64) (vhdTarget, error) {
 	number, err := chooseTarget(scanDisks())
 	if err != nil {
 		return nil, err
@@ -44,7 +45,7 @@ func openVHDTarget(size uint64) (vhdTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &vhdDisk{phys: phys, size: size}
+	d := &vhdDisk{phys: phys, size: size, keep: keep}
 	if _, entries, err := parseLayout(phys.layout); err == nil && !phys.fresh {
 		sort.Slice(entries, func(i, j int) bool { return entries[i].start < entries[j].start })
 		parts := make([]proto.Partition, len(entries))
@@ -64,7 +65,7 @@ func openVHDTarget(size uint64) (vhdTarget, error) {
 		d.store = parts[2].Size
 	}
 	if d.size == 0 { // the image leaves the size to the store
-		if d.size = proto.AutoVHDSize(d.store, physicalMemory()); d.size == 0 {
+		if d.size = proto.AutoVHDSize(d.store, physicalMemory()+d.keep); d.size == 0 {
 			return nil, fmt.Errorf("хранилище %s слишком мало для VHDX", formatBytes(d.store))
 		}
 	}
@@ -86,8 +87,8 @@ func (d *vhdDisk) Describe() string {
 // Fit plans the table inside the virtual disk and refuses a store too small for
 // the worst case of proto.StoreNeed.
 func (d *vhdDisk) Fit(m proto.Manifest) (proto.Manifest, error) {
-	if need := proto.StoreNeed(d.size, physicalMemory()); d.store < need {
-		return proto.Manifest{}, fmt.Errorf("хранилищу нужно %s (VHDX %s, запас на перезапись, память ПК), а на диске %s",
+	if need := proto.StoreNeed(d.size, physicalMemory()+d.keep); d.store < need {
+		return proto.Manifest{}, fmt.Errorf("хранилищу нужно %s (VHDX %s, запас на перезапись, память ПК, keep), а на диске %s",
 			formatBytes(need), formatBytes(d.size), formatBytes(d.store))
 	}
 	return fitFresh(m, d.size)
@@ -266,7 +267,8 @@ func (d *vhdDisk) SetName(name string) error {
 // the SAM, which only a running Windows can change, so the reset service sets
 // them on every boot. Booting local itself to set them once does not work: no
 // differencing disk can be made on top of the disk Windows runs from.
-func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
+func (d *vhdDisk) Boot(state proto.StoreState, setup playerSetup) error {
+	accounts := setup.Accounts
 	if !strings.EqualFold(os.Getenv("SystemDrive"), "X:") {
 		return errors.New("загрузочная запись VHDX работает только в WinPE")
 	}
@@ -284,6 +286,9 @@ func (d *vhdDisk) Boot(state proto.StoreState, accounts *proto.Accounts) error {
 		if err := os.WriteFile(storePath(proto.AccountsFile), b, 0o600); err != nil {
 			return err
 		}
+	}
+	if err := d.ensureKeep(setup.Keep); err != nil {
+		return fmt.Errorf("keep: %w", err)
 	}
 	// What a session or Save Mode left is gone once the new entry is in place.
 	for _, name := range []string{proto.DiffFile, proto.DiffFileB} {
@@ -596,10 +601,10 @@ func (s *vhdStore) EnterSave() error {
 }
 
 // LeaveSave boots the usual chain again and then removes save.vhdx.
-func (s *vhdStore) LeaveSave(accounts *proto.Accounts) error {
+func (s *vhdStore) LeaveSave(setup playerSetup) error {
 	st := s.state
 	st.Save = ""
-	if err := s.d.Boot(st, accounts); err != nil {
+	if err := s.d.Boot(st, setup); err != nil {
 		return err
 	}
 	s.state, _ = readState()
@@ -628,11 +633,11 @@ func (s *vhdStore) OpenSaved() (source, error) {
 // goes into local, under the differencing disks: Boot writes it there and makes a
 // fresh differencing disk with the boot entry, as the old ones are made from the
 // local before the change.
-func (s *vhdStore) UpdateService(accounts *proto.Accounts) error {
+func (s *vhdStore) UpdateService(setup playerSetup) error {
 	if s.state.Save != "" {
 		return s.d.installReset(proto.SaveFile)
 	}
-	if err := s.d.Boot(s.state, accounts); err != nil {
+	if err := s.d.Boot(s.state, setup); err != nil {
 		return err
 	}
 	s.state, _ = readState()
@@ -688,8 +693,11 @@ const storeSDDL = "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FRFX;;;BA)"
 // protectStore replaces the owner and the whole DACL of the store root. An owner
 // may always rewrite the DACL, so the owner becomes SYSTEM too. Administrators can
 // still take ownership back: this keeps the players out, not the operator.
-func protectStore(root string) error {
-	sd, err := windows.SecurityDescriptorFromString(storeSDDL)
+func protectStore(root string) error { return protectWith(root, storeSDDL) }
+
+// protectWith replaces the owner and the whole DACL of root with those of sddl.
+func protectWith(root, sddl string) error {
+	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return err
 	}

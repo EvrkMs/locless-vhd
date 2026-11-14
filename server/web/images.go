@@ -302,6 +302,34 @@ func (h *server) setImageVHDSize(w http.ResponseWriter, r *http.Request) {
 	h.done(w, h.store.SetImageVHDSize(r.Context(), r.PathValue("name"), in.GiB<<30))
 }
 
+// setImageKeep sets keep.vhdx of an image: its size in whole gibibytes, 0 turns
+// it off, and the folders that go into it.
+func (h *server) setImageKeep(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		GiB     uint64
+		Folders []string
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.GiB > proto.MaxKeepSize>>30 { // before the shift can overflow
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Размер keep: до %d ГБ", proto.MaxKeepSize>>30))
+		return
+	}
+	folders := []string{}
+	for _, f := range in.Folders {
+		if f = strings.TrimSpace(f); f != "" {
+			folders = append(folders, f)
+		}
+	}
+	err := h.store.SetImageKeep(r.Context(), r.PathValue("name"), proto.Keep{Size: in.GiB << 30, Folders: folders})
+	if errors.Is(err, store.ErrBadKeep) {
+		writeError(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), store.ErrBadKeep.Error()+": "))
+		return
+	}
+	h.done(w, err)
+}
+
 // setHostImage links a PC to an image, or clears the link.
 func (h *server) setHostImage(w http.ResponseWriter, r *http.Request) {
 	id, ok := hostID(w, r)

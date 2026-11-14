@@ -402,6 +402,28 @@ func TestTasksUseTheImageOfThePC(t *testing.T) {
 	if w := do(h, http.MethodPut, "/api/images/nope/vhd", `{"GiB":80}`); w.Code != http.StatusNotFound {
 		t.Fatalf("vhd size of a missing image: %d", w.Code)
 	}
+
+	// keep.vhdx: the defaults until changed, then what the operator wrote.
+	if keep, _ := s.ImageKeep(ctx, "win11"); keep.Size != proto.DefaultKeepSize || len(keep.Folders) != len(proto.DefaultKeepFolders) {
+		t.Fatalf("default keep %+v", keep)
+	}
+	keepBodies := map[string]int{
+		`{"GiB":30,"Folders":["C:\\Games\\Steam\\steamapps\\shadercache"," ",""]}`: http.StatusNoContent,
+		`{"GiB":30,"Folders":["C:\\Windows\\System32\\x"]}`:                        http.StatusBadRequest,
+		`{"GiB":100000,"Folders":[]}`:                                              http.StatusBadRequest,
+		`{"GiB":18446744073709551615}`:                                             http.StatusBadRequest,
+	}
+	for body, want := range keepBodies {
+		if w := do(h, http.MethodPut, "/api/images/win11/keep", body); w.Code != want {
+			t.Fatalf("keep %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if keep, _ := s.ImageKeep(ctx, "win11"); keep.Size != 30<<30 || len(keep.Folders) != 1 {
+		t.Fatalf("keep %+v", keep)
+	}
+	if w := do(h, http.MethodPut, "/api/images/nope/keep", `{"GiB":0}`); w.Code != http.StatusNotFound {
+		t.Fatalf("keep of a missing image: %d", w.Code)
+	}
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"wipe"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown kind: %d", w.Code)
 	}

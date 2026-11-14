@@ -15,6 +15,6 @@ func openSavedStore() (savedStore, error) {
 }
 
 // openVHDTarget exists so the package builds everywhere.
-func openVHDTarget(uint64) (vhdTarget, error) {
+func openVHDTarget(uint64, uint64) (vhdTarget, error) {
 	return nil, errors.New("writing a virtual disk needs Windows")
 }

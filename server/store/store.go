@@ -128,6 +128,10 @@ var migrations = []string{`
 	-- A PC has a queue of tasks now, see QueueTask.
 	DROP INDEX one_active_task;
 	CREATE INDEX open_tasks ON tasks(host_id, id) WHERE finished_at IS NULL;
+`, `
+	-- keep.vhdx of an image, see proto.Keep. NULL folders mean proto.DefaultKeepFolders.
+	ALTER TABLE images ADD COLUMN keep_size INTEGER NOT NULL DEFAULT 21474836480;
+	ALTER TABLE images ADD COLUMN keep_folders TEXT;
 `}
 
 // Setting keys.

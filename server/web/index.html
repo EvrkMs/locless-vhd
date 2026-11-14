@@ -102,6 +102,7 @@ select { font: inherit; font-size: 13px; color: var(--text); background: var(--b
 #exitMode { max-width: 100%; }
 .name { color: var(--text); font-size: 15px; font-weight: 500; white-space: nowrap; }
 input { font: inherit; font-size: 14px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 0; }
+textarea { font: 13px/1.5 ui-monospace, Consolas, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box; resize: vertical; }
 form { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 18px; border-top: 1px solid var(--line); }
 form input { flex: 1 1 180px; }
 .empty { padding: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
@@ -292,6 +293,29 @@ form input { flex: 1 1 180px; }
     <button type="button" id="messageCopy">Копировать</button>
     <button type="button" class="main" id="messageClose">Закрыть</button>
   </div>
+</dialog>
+
+<dialog id="keepDialog" class="wide" aria-labelledby="keepTitle">
+  <form id="keepForm" method="dialog">
+    <h2 id="keepTitle"></h2>
+    <div class="alert" id="keepError" role="alert" hidden></div>
+    <p class="sub">Папки из списка переживают сброс: служба при каждой загрузке подключает keep.vhdx в
+      C:\LVHD\Keep и ставит на них ссылки туда. Запускать файлы оттуда нельзя. %PLAYERPROFILE% — профиль
+      игрока. ПК получат настройку при следующем «Развернуть в VHDX» или «Обновить службу».</p>
+    <div class="field">
+      <label for="keepSize">Размер, ГБ (0 — keep выключен)</label>
+      <input id="keepSize" type="number" min="0" max="512" step="1" required>
+    </div>
+    <div class="field">
+      <label for="keepFolders">Папки, по одной на строку</label>
+      <textarea id="keepFolders" rows="10" spellcheck="false"></textarea>
+    </div>
+    <div class="buttons">
+      <button type="button" id="keepDefaults">По умолчанию</button>
+      <button type="button" id="keepCancel">Отмена</button>
+      <button type="submit" class="main">Сохранить</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="hostDialog" aria-labelledby="hostDialogTitle">
@@ -581,6 +605,33 @@ function openHostDialog({ host = null, mac = '', name = '' }) {
 
 $('addHost').addEventListener('click', () => openHostDialog({}));
 $('hostCancel').addEventListener('click', () => $('hostDialog').close());
+
+// The keep.vhdx setting of an image: its size and the folders that go into it.
+let keepImage = null, keepDefaults = [];
+function openKeepDialog(image) {
+  keepImage = image;
+  $('keepTitle').textContent = 'Настройка keep · ' + image.name;
+  $('keepSize').value = Math.round(image.keep.size / 2 ** 30);
+  $('keepFolders').value = image.keep.folders.join('\n');
+  $('keepError').hidden = true;
+  $('keepDialog').showModal();
+  $('keepFolders').focus();
+}
+$('keepCancel').addEventListener('click', () => $('keepDialog').close());
+$('keepDefaults').addEventListener('click', () => { $('keepFolders').value = keepDefaults.join('\n'); });
+$('keepForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const folders = $('keepFolders').value.split('\n').map(f => f.trim()).filter(f => f);
+  try {
+    await api('PUT', `/api/images/${keepImage.name}/keep`, { GiB: Number($('keepSize').value), Folders: folders });
+    $('keepDialog').close();
+    showError('');
+    await refresh();
+  } catch (err) {
+    $('keepError').textContent = err.message;
+    $('keepError').hidden = false;
+  }
+});
 $('metricsClose').addEventListener('click', () => $('metricsDialog').close());
 $('messageClose').addEventListener('click', () => $('messageDialog').close());
 $('messageCopy').addEventListener('click', async () => {
@@ -777,6 +828,9 @@ function imageActions(image) {
       const answer = prompt('Размер виртуального диска в ГБ, 0 — по месту на хранилище каждого ПК. Новый размер получат ПК при следующем развёртывании в VHDX.', Math.round(image.vhdSize / 2 ** 30));
       if (answer !== null) act('PUT', path + '/vhd', { GiB: Number(answer) });
     },
+  }, {
+    text: `Настройка keep: ${image.keep.size ? formatSize(image.keep.size) + ', папок ' + image.keep.folders.length : 'выключен'}…`,
+    run: () => openKeepDialog(image),
   }, null];
   if (older.length) {
     for (const v of older) {
@@ -862,6 +916,7 @@ async function refresh() {
   try {
     const s = await api('GET', '/api/state');
     lastImages = s.images;
+    keepDefaults = s.keepDefaults || [];
     fill(s.hosts, $('hosts'), $('hostTable'), $('noHosts'), $('hostCount'), hostRow);
     fill(s.discovered, $('found'), $('foundTable'), $('noFound'), $('foundCount'),
       (d, i) => foundRow(d, s.hosts.length + i));

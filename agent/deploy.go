@@ -124,7 +124,7 @@ type vhdTarget interface {
 	// Boot puts the differencing disk on top of the written base, makes Windows
 	// boot from it and records state on the store. It runs after SetName. With
 	// accounts the first boot sets them up and then makes the differencing disk.
-	Boot(state proto.StoreState, accounts *proto.Accounts) error
+	Boot(state proto.StoreState, setup playerSetup) error
 }
 
 // updater is a target that may already hold an earlier version of the image, laid
@@ -169,12 +169,12 @@ func (w *worker) runDeployVHD(task *proto.AgentTask) error {
 	var vt vhdTarget
 	open := func() (target, error) {
 		var err error
-		vt, err = w.openVHD(task.VHDSize)
+		vt, err = w.openVHD(task.VHDSize, keepSize(task.Keep))
 		return vt, err
 	}
 	boot := func(info proto.DeployInfo) error {
 		return vt.Boot(proto.StoreState{Image: task.Image, Version: info.Version, BaseID: info.ID, VHDSize: vt.VHDSize(),
-			Written: time.Now()}, task.Accounts)
+			Written: time.Now()}, setupOf(task))
 	}
 	return w.deployInto(task, "Развёртывание в VHDX", open, boot)
 }

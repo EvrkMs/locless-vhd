@@ -28,7 +28,7 @@ type savedStore interface {
 	EnterSave() error
 	// LeaveSave boots a fresh differencing disk on top of local again and removes
 	// save.vhdx. The base was not changed, so local is still good.
-	LeaveSave(accounts *proto.Accounts) error
+	LeaveSave(setup playerSetup) error
 	// OpenSaved attaches the base with save.vhdx on top as a disk to clone.
 	OpenSaved() (source, error)
 	// Changes reads which blocks save.vhdx holds itself, with nothing attached.
@@ -36,7 +36,7 @@ type savedStore interface {
 	// UpdateService writes this agent as the reset service: into save.vhdx in Save
 	// Mode, otherwise into local, which takes a fresh differencing disk, as one
 	// made on top of the old local is no longer valid.
-	UpdateService(accounts *proto.Accounts) error
+	UpdateService(setup playerSetup) error
 	Close() error
 }
 
@@ -107,7 +107,7 @@ func (w *worker) runSaveDiscard(task *proto.AgentTask) error {
 	defer s.Close()
 	message := "ПК не был в режиме сохранения"
 	if st.Save != "" {
-		if err := s.LeaveSave(task.Accounts); err != nil {
+		if err := s.LeaveSave(setupOf(task)); err != nil {
 			return fmt.Errorf("режим сохранения не выключен: %w", err)
 		}
 		message = fmt.Sprintf("режим сохранения выключен без сохранения, %s v%d", st.Image, st.Version)
@@ -129,7 +129,7 @@ func (w *worker) runUpdateService(task *proto.AgentTask) error {
 		return err
 	}
 	defer s.Close()
-	if err := s.UpdateService(task.Accounts); err != nil {
+	if err := s.UpdateService(setupOf(task)); err != nil {
 		return fmt.Errorf("служба не обновлена: %w", err)
 	}
 	where := "в local, сеанс начат заново"

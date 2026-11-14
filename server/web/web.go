@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"locless-vhd/proto"
 	"locless-vhd/server/scenario"
 	"locless-vhd/server/store"
 	"locless-vhd/server/winpe"
@@ -54,6 +55,7 @@ type Store interface {
 	DeleteImage(context.Context, string) error
 	SetHostImage(context.Context, int64, string) error
 	SetImageVHDSize(ctx context.Context, image string, size uint64) error
+	SetImageKeep(ctx context.Context, image string, k proto.Keep) error
 	HostImage(context.Context, int64) (string, error)
 	AllVersions(context.Context, string) ([]store.Version, error)
 	DeleteVersion(context.Context, string, int) error
@@ -151,6 +153,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("POST /api/images/{name}/versions/{number}/enable", h.enableVersion)
 	mux.HandleFunc("POST /api/images/{name}/merge", h.mergeImage)
 	mux.HandleFunc("PUT /api/images/{name}/vhd", h.setImageVHDSize)
+	mux.HandleFunc("PUT /api/images/{name}/keep", h.setImageKeep)
 	mux.HandleFunc("PUT /api/hosts/{id}/image", h.setHostImage)
 	return guard(c.Addr, mux)
 }
@@ -215,7 +218,7 @@ func (h *server) state(w http.ResponseWriter, r *http.Request) {
 		status = h.cfg.Status()
 	}
 	out := map[string]any{"hosts": hosts, "discovered": discovered, "images": images, "tasks": tasks,
-		"storageOffline": offline, "server": status}
+		"storageOffline": offline, "server": status, "keepDefaults": proto.DefaultKeepFolders}
 	if h.cfg.Scenarios != nil {
 		out["dev"] = true
 		out["scenarios"] = h.cfg.Scenarios.Runs()
@@ -302,8 +305,10 @@ func (h *server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Kind {
-	case store.TaskAgent, store.TaskFormat, store.TaskPrepare, store.TaskSaveMode, store.TaskSaveDiscard, store.TaskUpdateService:
+	case store.TaskAgent, store.TaskFormat, store.TaskPrepare, store.TaskSaveMode:
 		image = "" // Save Mode works on what the store of the PC holds
+	case store.TaskSaveDiscard, store.TaskUpdateService:
+		// The image, if the PC has one, only gives the keep.vhdx setting.
 	case store.TaskClone, store.TaskDeploy, store.TaskDeployVHD, store.TaskSaveImage:
 		if image == "" {
 			writeError(w, http.StatusConflict, "Сначала выберите образ у компьютера")

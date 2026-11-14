@@ -64,23 +64,23 @@ type worker struct {
 	cfg        proto.AgentConfig
 	client     *client
 	screen     *screen
-	localIP    func() string                        // the address of this PC, "" if there is none
-	sleep      func(time.Duration)                  // replaced in tests
-	reboot     func()                               // ends the session
-	retry      chan struct{}                        // the operator pressed R
-	openDisk   func() (source, error)               // the disk to clone
-	openTarget func() (target, error)               // the disk to overwrite
-	openVHD    func(size uint64) (vhdTarget, error) // a virtual disk of that size on the store
-	openStore  func() (savedStore, error)           // the store with a deploy into VHDX, for Save Mode
-	abort      chan struct{}                        // the operator pressed Esc before a deploy
-	names      []string                             // stages of the current task
-	taskID     int64                                // the task being worked on, 0 before the server named one
-	failed     atomic.Bool                          // the error screen is up, so a reboot cannot break anything
-	rec        *recorder                            // metrics of the clone or deploy running now, nil otherwise
-	attempts   int                                  // tries of the task since this boot, for the metrics
-	shrinkSaid string                               // the last word of Shrink about the volume, for the metrics
-	startup    startTimes                           // how long this attempt took to reach the server
-	confirm    int                                  // seconds of warning before a wipe, from the task
+	localIP    func() string                              // the address of this PC, "" if there is none
+	sleep      func(time.Duration)                        // replaced in tests
+	reboot     func()                                     // ends the session
+	retry      chan struct{}                              // the operator pressed R
+	openDisk   func() (source, error)                     // the disk to clone
+	openTarget func() (target, error)                     // the disk to overwrite
+	openVHD    func(size, keep uint64) (vhdTarget, error) // a virtual disk of that size on the store, keep.vhdx beside it
+	openStore  func() (savedStore, error)                 // the store with a deploy into VHDX, for Save Mode
+	abort      chan struct{}                              // the operator pressed Esc before a deploy
+	names      []string                                   // stages of the current task
+	taskID     int64                                      // the task being worked on, 0 before the server named one
+	failed     atomic.Bool                                // the error screen is up, so a reboot cannot break anything
+	rec        *recorder                                  // metrics of the clone or deploy running now, nil otherwise
+	attempts   int                                        // tries of the task since this boot, for the metrics
+	shrinkSaid string                                     // the last word of Shrink about the volume, for the metrics
+	startup    startTimes                                 // how long this attempt took to reach the server
+	confirm    int                                        // seconds of warning before a wipe, from the task
 }
 
 // startTimes is the way of an attempt to the server, for the metrics of its task.

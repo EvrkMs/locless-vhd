@@ -28,7 +28,8 @@ type fakeSaveStore struct {
 	updated  int
 }
 
-func (s *fakeSaveStore) UpdateService(a *proto.Accounts) error {
+func (s *fakeSaveStore) UpdateService(setup playerSetup) error {
+	a := setup.Accounts
 	s.updated++
 	s.accounts = a
 	return nil
@@ -49,7 +50,8 @@ func (s *fakeSaveStore) EnterSave() error {
 	return nil
 }
 
-func (s *fakeSaveStore) LeaveSave(a *proto.Accounts) error {
+func (s *fakeSaveStore) LeaveSave(setup playerSetup) error {
+	a := setup.Accounts
 	s.left++
 	s.accounts = a
 	s.state.Save = ""

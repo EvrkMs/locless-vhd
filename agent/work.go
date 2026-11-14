@@ -70,7 +70,7 @@ type worker struct {
 	retry      chan struct{}                              // the operator pressed R
 	openDisk   func() (source, error)                     // the disk to clone
 	openTarget func() (target, error)                     // the disk to overwrite
-	openVHD    func(size, keep uint64) (vhdTarget, error) // a virtual disk of that size on the store, keep.vhdx beside it
+	openVHD    func(size, reserve uint64) (vhdTarget, error) // a virtual disk of that size on the store, reserve kept beside it
 	openStore  func() (savedStore, error)                 // the store with a deploy into VHDX, for Save Mode
 	abort      chan struct{}                              // the operator pressed Esc before a deploy
 	names      []string                                   // stages of the current task

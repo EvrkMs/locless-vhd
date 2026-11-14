@@ -56,6 +56,7 @@ type Store interface {
 	SetHostImage(context.Context, int64, string) error
 	SetImageVHDSize(ctx context.Context, image string, size uint64) error
 	SetImageKeep(ctx context.Context, image string, k proto.Keep) error
+	SetImagePageFile(ctx context.Context, image string, p proto.PageFile) error
 	HostImage(context.Context, int64) (string, error)
 	AllVersions(context.Context, string) ([]store.Version, error)
 	DeleteVersion(context.Context, string, int) error
@@ -154,6 +155,7 @@ func New(c Config) http.Handler {
 	mux.HandleFunc("POST /api/images/{name}/merge", h.mergeImage)
 	mux.HandleFunc("PUT /api/images/{name}/vhd", h.setImageVHDSize)
 	mux.HandleFunc("PUT /api/images/{name}/keep", h.setImageKeep)
+	mux.HandleFunc("PUT /api/images/{name}/pagefile", h.setImagePageFile)
 	mux.HandleFunc("PUT /api/hosts/{id}/image", h.setHostImage)
 	return guard(c.Addr, mux)
 }

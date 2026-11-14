@@ -10,10 +10,21 @@ import (
 type playerSetup struct {
 	Accounts *proto.Accounts
 	Keep     *proto.Keep
+	PageFile *proto.PageFile // written into local, see proto.PageFile
 }
 
 func setupOf(task *proto.AgentTask) playerSetup {
-	return playerSetup{Accounts: task.Accounts, Keep: task.Keep}
+	return playerSetup{Accounts: task.Accounts, Keep: task.Keep, PageFile: task.PageFile}
+}
+
+// storeReserve is the room the store keeps beside the VHDX for keep.vhdx and a
+// fixed page file larger than the memory, which StoreNeed counts already.
+func storeReserve(task *proto.AgentTask) uint64 {
+	reserve := keepSize(task.Keep)
+	if task.PageFile != nil {
+		reserve += task.PageFile.Reserve(physicalMemory())
+	}
+	return reserve
 }
 
 // keepSize is the room keep.vhdx takes on the store, 0 without it.

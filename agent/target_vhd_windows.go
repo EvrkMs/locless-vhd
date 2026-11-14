@@ -31,7 +31,7 @@ type vhdDisk struct {
 	store    uint64 // size of the store partition, now or once laid out
 	inner    *writeDisk
 	attached *attachedDisk
-	keep     uint64 // room keep.vhdx takes on the store
+	keep     uint64 // room kept on the store beside the VHDX: keep.vhdx, a large page file
 }
 
 // openVHDTarget picks the physical disk the same way as a deploy and plans the
@@ -278,6 +278,9 @@ func (d *vhdDisk) Boot(state proto.StoreState, setup playerSetup) error {
 	if err := d.installReset(proto.LocalFile); err != nil {
 		return fmt.Errorf("служба сброса: %w", err)
 	}
+	if err := d.setPageFile(setup.PageFile); err != nil {
+		return fmt.Errorf("файл подкачки: %w", err)
+	}
 	if !accounts.Empty() {
 		b, err := json.Marshal(accounts)
 		if err != nil {
@@ -345,6 +348,40 @@ func readState() (proto.StoreState, error) {
 		return st, err
 	}
 	return st, json.Unmarshal(b, &st)
+}
+
+// setPageFile writes the page file setting into local. Windows reads it at the
+// very start of boot, so only an offline write lasts past the reset.
+func (d *vhdDisk) setPageFile(p *proto.PageFile) (err error) {
+	if p == nil {
+		return nil
+	}
+	value, write := p.PagingFiles()
+	if !write {
+		return nil
+	}
+	if err := d.attach(proto.LocalFile); err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.mountWindows(); err != nil {
+		return err
+	}
+	const hive = `HKLM\LOCLESSPF`
+	if err := runReg("load", hive, windowsLetter+`:\Windows\System32\config\SYSTEM`); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, runReg("unload", hive)) }()
+	out, err := exec.Command("reg", "query", hive+`\Select`, "/v", "Current").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reg query: %w: %s", err, lastLine(out))
+	}
+	set, err := controlSet(string(out))
+	if err != nil {
+		return err
+	}
+	key := hive + `\` + set + `\Control\Session Manager\Memory Management`
+	return runReg("add", key, "/v", "PagingFiles", "/t", "REG_MULTI_SZ", "/d", value, "/f")
 }
 
 // installReset puts the agent as the reset service into a file of the store:

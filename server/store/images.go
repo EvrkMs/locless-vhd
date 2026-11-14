@@ -26,17 +26,18 @@ type Version struct {
 
 // Image is a named chain of versions, oldest first.
 type Image struct {
-	ID       int64      `json:"id"`
-	Name     string     `json:"name"`
-	Path     string     `json:"path"`    // full path of its folder, fixed when it was created
-	VHDSize  uint64     `json:"vhdSize"` // the virtual disk a deploy into VHDX makes, in bytes
-	Keep     proto.Keep `json:"keep"`    // keep.vhdx of the PCs of the image
-	Versions []Version  `json:"versions"`
-	Busy     int        `json:"busy"`    // unfinished tasks using the image
-	Missing  bool       `json:"missing"` // its folder or a version file is gone
-	Offline  bool       `json:"offline"` // the place its folder lives in is unreachable
-	Merging  bool       `json:"merging"` // its versions are being merged right now
-	MergeErr string     `json:"mergeError"`
+	ID       int64          `json:"id"`
+	Name     string         `json:"name"`
+	Path     string         `json:"path"`     // full path of its folder, fixed when it was created
+	VHDSize  uint64         `json:"vhdSize"`  // the virtual disk a deploy into VHDX makes, in bytes
+	Keep     proto.Keep     `json:"keep"`     // keep.vhdx of the PCs of the image
+	PageFile proto.PageFile `json:"pageFile"` // written into local of its PCs
+	Versions []Version      `json:"versions"`
+	Busy     int            `json:"busy"`    // unfinished tasks using the image
+	Missing  bool           `json:"missing"` // its folder or a version file is gone
+	Offline  bool           `json:"offline"` // the place its folder lives in is unreachable
+	Merging  bool           `json:"merging"` // its versions are being merged right now
+	MergeErr string         `json:"mergeError"`
 }
 
 // ErrImageExists means the name is taken.
@@ -120,6 +121,32 @@ func (s *Store) SetImageKeep(ctx context.Context, name string, k proto.Keep) err
 
 // ErrBadKeep means a keep setting the PCs cannot use; the message says why.
 var ErrBadKeep = errors.New("store: bad keep setting")
+
+// ErrBadPageFile means a page file setting the PCs cannot use; the message says why.
+var ErrBadPageFile = errors.New("store: bad page file setting")
+
+// ImagePageFile returns the page file setting of an image.
+func (s *Store) ImagePageFile(ctx context.Context, name string) (proto.PageFile, error) {
+	var p proto.PageFile
+	err := s.db.QueryRowContext(ctx, "SELECT page_mode, page_min, page_max FROM images WHERE name = ?", name).Scan(&p.Mode, &p.MinMB, &p.MaxMB)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+// SetImagePageFile changes the page file setting of an image. The PCs get it
+// with their next deploy into VHDX, service update or leaving Save Mode.
+func (s *Store) SetImagePageFile(ctx context.Context, name string, p proto.PageFile) error {
+	if err := p.Check(); err != nil {
+		return fmt.Errorf("%w: %v", ErrBadPageFile, err)
+	}
+	if p.Mode != proto.PageFileFixed {
+		p.MinMB, p.MaxMB = 0, 0
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE images SET page_mode = ?, page_min = ?, page_max = ? WHERE name = ?", p.Mode, p.MinMB, p.MaxMB, name)
+	return affected(res, err)
+}
 
 // ImageVHDSize returns the size of the virtual disk a deploy into VHDX makes.
 func (s *Store) ImageVHDSize(ctx context.Context, name string) (uint64, error) {
@@ -401,7 +428,7 @@ func (s *Store) AddVersion(ctx context.Context, image string, v Version) error {
 // Images lists images by name with their versions.
 func (s *Store) Images(ctx context.Context) ([]Image, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, i.name, i.path, i.vhd_size, i.keep_size, i.keep_folders, v.number, v.file, v.size, v.source_mac, v.created_at, v.parent, v.disabled
+		SELECT i.id, i.name, i.path, i.vhd_size, i.keep_size, i.keep_folders, i.page_mode, i.page_min, i.page_max, v.number, v.file, v.size, v.source_mac, v.created_at, v.parent, v.disabled
 		FROM images i LEFT JOIN image_versions v ON v.image_id = i.id
 		ORDER BY i.name COLLATE NOCASE, v.number`)
 	if err != nil {
@@ -417,12 +444,13 @@ func (s *Store) Images(ctx context.Context) ([]Image, error) {
 		var number, size, created, parent sql.NullInt64
 		var disabled sql.NullBool
 		var file, mac, folders sql.NullString
-		if err := rows.Scan(&id, &name, &path, &vhdSize, &keepSize, &folders, &number, &file, &size, &mac, &created, &parent, &disabled); err != nil {
+		var page proto.PageFile
+		if err := rows.Scan(&id, &name, &path, &vhdSize, &keepSize, &folders, &page.Mode, &page.MinMB, &page.MaxMB, &number, &file, &size, &mac, &created, &parent, &disabled); err != nil {
 			return nil, err
 		}
 		if len(images) == 0 || images[len(images)-1].ID != id {
 			images = append(images, Image{ID: id, Name: name, Path: path, VHDSize: vhdSize,
-				Keep: keepOf(keepSize, folders), Versions: []Version{}})
+				Keep: keepOf(keepSize, folders), PageFile: page, Versions: []Version{}})
 		}
 		if number.Valid {
 			last := &images[len(images)-1]

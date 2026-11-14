@@ -132,6 +132,11 @@ var migrations = []string{`
 	-- keep.vhdx of an image, see proto.Keep. NULL folders mean proto.DefaultKeepFolders.
 	ALTER TABLE images ADD COLUMN keep_size INTEGER NOT NULL DEFAULT 21474836480;
 	ALTER TABLE images ADD COLUMN keep_folders TEXT;
+`, `
+	-- Page file of an image, see proto.PageFile.
+	ALTER TABLE images ADD COLUMN page_mode TEXT NOT NULL DEFAULT 'image';
+	ALTER TABLE images ADD COLUMN page_min INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE images ADD COLUMN page_max INTEGER NOT NULL DEFAULT 0;
 `}
 
 // Setting keys.

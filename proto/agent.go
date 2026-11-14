@@ -37,6 +37,9 @@ type AgentTask struct {
 	// Keep is the keep.vhdx setting of the image, for the tasks that make the
 	// chain of the players again. Nil leaves the store as it is.
 	Keep *Keep `json:"keep,omitempty"`
+	// PageFile is the page file setting of the image for the same tasks, written
+	// into local. Nil leaves it as it is.
+	PageFile *PageFile `json:"pageFile,omitempty"`
 	// ConfirmSeconds is how long the agent warns before it wipes the disk; 0 does
 	// not wait at all. Absent means the agent's own default.
 	ConfirmSeconds *int `json:"confirmSeconds,omitempty"`

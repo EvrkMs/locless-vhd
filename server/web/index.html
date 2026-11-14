@@ -318,6 +318,32 @@ form input { flex: 1 1 180px; }
   </form>
 </dialog>
 
+<dialog id="pageDialog" aria-labelledby="pageTitle">
+  <form id="pageForm" method="dialog">
+    <h2 id="pageTitle"></h2>
+    <div class="alert" id="pageError" role="alert" hidden></div>
+    <p class="sub">Записывается в local ПК при «Развернуть в VHDX», «Обновить службу» и выходе из
+      Save Mode: Windows читает эту настройку раньше, чем стартует служба.</p>
+    <div class="field">
+      <label for="pageMode">Режим</label>
+      <select id="pageMode">
+        <option value="image">Как в образе</option>
+        <option value="auto">Размер выбирает Windows</option>
+        <option value="fixed">Фиксированный размер</option>
+        <option value="off">Без файла подкачки</option>
+      </select>
+    </div>
+    <div class="field" id="pageSizes">
+      <label for="pageMin">Минимум и максимум, МБ</label>
+      <div class="row"><input id="pageMin" type="number" min="16" step="1"> <input id="pageMax" type="number" min="16" step="1"></div>
+    </div>
+    <div class="buttons">
+      <button type="button" id="pageCancel">Отмена</button>
+      <button type="submit" class="main">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="hostDialog" aria-labelledby="hostDialogTitle">
   <form id="hostForm" method="dialog">
     <h2 id="hostDialogTitle"></h2>
@@ -606,6 +632,42 @@ function openHostDialog({ host = null, mac = '', name = '' }) {
 $('addHost').addEventListener('click', () => openHostDialog({}));
 $('hostCancel').addEventListener('click', () => $('hostDialog').close());
 
+// The page file setting of an image, written into local of its PCs.
+function pageText(p) {
+  if (!p || p.mode === 'image') return 'как в образе';
+  if (p.mode === 'auto') return 'выбирает Windows';
+  if (p.mode === 'off') return 'выключен';
+  return `${p.minMb}–${p.maxMb} МБ`;
+}
+let pageImage = null;
+function openPageDialog(image) {
+  pageImage = image;
+  const p = image.pageFile || { mode: 'image' };
+  $('pageTitle').textContent = 'Файл подкачки · ' + image.name;
+  $('pageMode').value = p.mode;
+  $('pageMin').value = p.minMb || 4096;
+  $('pageMax').value = p.maxMb || 8192;
+  $('pageSizes').hidden = p.mode !== 'fixed';
+  $('pageError').hidden = true;
+  $('pageDialog').showModal();
+}
+$('pageMode').addEventListener('change', () => { $('pageSizes').hidden = $('pageMode').value !== 'fixed'; });
+$('pageCancel').addEventListener('click', () => $('pageDialog').close());
+$('pageForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const mode = $('pageMode').value;
+  const body = { mode, minMb: mode === 'fixed' ? Number($('pageMin').value) : 0, maxMb: mode === 'fixed' ? Number($('pageMax').value) : 0 };
+  try {
+    await api('PUT', `/api/images/${pageImage.name}/pagefile`, body);
+    $('pageDialog').close();
+    showError('');
+    await refresh();
+  } catch (err) {
+    $('pageError').textContent = err.message;
+    $('pageError').hidden = false;
+  }
+});
+
 // The keep.vhdx setting of an image: its size and the folders that go into it.
 let keepImage = null, keepDefaults = [];
 function openKeepDialog(image) {
@@ -831,6 +893,9 @@ function imageActions(image) {
   }, {
     text: `Настройка keep: ${image.keep.size ? formatSize(image.keep.size) + ', папок ' + image.keep.folders.length : 'выключен'}…`,
     run: () => openKeepDialog(image),
+  }, {
+    text: `Файл подкачки: ${pageText(image.pageFile)}…`,
+    run: () => openPageDialog(image),
   }, null];
   if (older.length) {
     for (const v of older) {

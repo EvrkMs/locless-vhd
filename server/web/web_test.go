@@ -424,6 +424,30 @@ func TestTasksUseTheImageOfThePC(t *testing.T) {
 	if w := do(h, http.MethodPut, "/api/images/nope/keep", `{"GiB":0}`); w.Code != http.StatusNotFound {
 		t.Fatalf("keep of a missing image: %d", w.Code)
 	}
+
+	// The page file: as in the image until changed.
+	if page, _ := s.ImagePageFile(ctx, "win11"); page != proto.DefaultPageFile {
+		t.Fatalf("default page file %+v", page)
+	}
+	pageBodies := map[string]int{
+		`{"mode":"fixed","minMb":4096,"maxMb":8192}`: http.StatusNoContent,
+		`{"mode":"fixed","minMb":8192,"maxMb":4096}`: http.StatusBadRequest,
+		`{"mode":"swap"}`: http.StatusBadRequest,
+	}
+	for body, want := range pageBodies {
+		if w := do(h, http.MethodPut, "/api/images/win11/pagefile", body); w.Code != want {
+			t.Fatalf("page file %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if page, _ := s.ImagePageFile(ctx, "win11"); page != (proto.PageFile{Mode: proto.PageFileFixed, MinMB: 4096, MaxMB: 8192}) {
+		t.Fatalf("page file %+v", page)
+	}
+	if w := do(h, http.MethodPut, "/api/images/win11/pagefile", `{"mode":"off","minMb":1,"maxMb":2}`); w.Code != http.StatusNoContent {
+		t.Fatalf("page file off: %d %s", w.Code, w.Body)
+	}
+	if page, _ := s.ImagePageFile(ctx, "win11"); page != (proto.PageFile{Mode: proto.PageFileOff}) {
+		t.Fatalf("page file off kept sizes: %+v", page)
+	}
 	if w := do(h, http.MethodPost, path+"/task", `{"kind":"wipe"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown kind: %d", w.Code)
 	}

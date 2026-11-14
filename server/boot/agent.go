@@ -36,6 +36,7 @@ type AgentStore interface {
 	TaskInfo(ctx context.Context, id int64) (store.HostTask, error)
 	ImageVHDSize(ctx context.Context, image string) (uint64, error)
 	ImageKeep(ctx context.Context, image string) (proto.Keep, error)
+	ImagePageFile(ctx context.Context, image string) (proto.PageFile, error)
 	Setting(ctx context.Context, key string) (string, error)
 }
 
@@ -138,6 +139,14 @@ func addAgentRoutes(mux *http.ServeMux, c Config) {
 				}
 				if err == nil {
 					out.Keep = &keep
+				}
+				page, err := c.Agent.ImagePageFile(r.Context(), task.Image)
+				if err != nil && !errors.Is(err, store.ErrNotFound) {
+					internalError(w, c, err)
+					return
+				}
+				if err == nil {
+					out.PageFile = &page
 				}
 			}
 		}

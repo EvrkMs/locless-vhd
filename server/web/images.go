@@ -330,6 +330,20 @@ func (h *server) setImageKeep(w http.ResponseWriter, r *http.Request) {
 	h.done(w, err)
 }
 
+// setImagePageFile sets the page file of an image: image, auto, fixed or off.
+func (h *server) setImagePageFile(w http.ResponseWriter, r *http.Request) {
+	var in proto.PageFile
+	if !readJSON(w, r, &in) {
+		return
+	}
+	err := h.store.SetImagePageFile(r.Context(), r.PathValue("name"), in)
+	if errors.Is(err, store.ErrBadPageFile) {
+		writeError(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), store.ErrBadPageFile.Error()+": "))
+		return
+	}
+	h.done(w, err)
+}
+
 // setHostImage links a PC to an image, or clears the link.
 func (h *server) setHostImage(w http.ResponseWriter, r *http.Request) {
 	id, ok := hostID(w, r)

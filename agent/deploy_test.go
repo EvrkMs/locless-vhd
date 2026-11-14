@@ -652,6 +652,7 @@ type fakeVHD struct {
 	state    *proto.StoreState
 	accounts *proto.Accounts
 	keep     *proto.Keep
+	page     *proto.PageFile
 	bootErr  error
 }
 
@@ -660,6 +661,7 @@ func (v *fakeVHD) VHDSize() uint64 { return 100 << 30 }
 func (v *fakeVHD) Boot(state proto.StoreState, setup playerSetup) error {
 	accounts := setup.Accounts
 	v.keep = setup.Keep
+	v.page = setup.PageFile
 	if v.name == "" {
 		return errors.New("boot before the name was written into the base")
 	}
@@ -695,6 +697,9 @@ func TestDeployVHDWritesTheBaseAndBoots(t *testing.T) {
 	}
 	if v.keep == nil || v.keep.Size != proto.DefaultKeepSize || len(v.keep.Folders) != len(proto.DefaultKeepFolders) {
 		t.Fatalf("keep: %+v", v.keep)
+	}
+	if v.page == nil || *v.page != proto.DefaultPageFile {
+		t.Fatalf("page file: %+v", v.page)
 	}
 	if v.accounts == nil || v.accounts.AdminPassword != "secret" || v.accounts.PlayerUser != "Player" {
 		t.Fatalf("accounts: %+v", v.accounts)

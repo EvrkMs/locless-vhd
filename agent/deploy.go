@@ -169,7 +169,7 @@ func (w *worker) runDeployVHD(task *proto.AgentTask) error {
 	var vt vhdTarget
 	open := func() (target, error) {
 		var err error
-		vt, err = w.openVHD(task.VHDSize, keepSize(task.Keep))
+		vt, err = w.openVHD(task.VHDSize, storeReserve(task))
 		return vt, err
 	}
 	boot := func(info proto.DeployInfo) error {

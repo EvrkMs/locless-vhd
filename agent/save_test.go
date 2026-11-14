@@ -25,6 +25,13 @@ type fakeSaveStore struct {
 	closed   bool
 	opened   bool
 	layout   *proto.VHDXLayout // what save.vhdx holds; nil: its BAT cannot be read
+	updated  int
+}
+
+func (s *fakeSaveStore) UpdateService(a *proto.Accounts) error {
+	s.updated++
+	s.accounts = a
+	return nil
 }
 
 func (s *fakeSaveStore) Changes() (proto.VHDXLayout, error) {
@@ -239,6 +246,38 @@ func TestSaveImageWithoutTheBAT(t *testing.T) {
 		t.Fatalf("read %d places, want all 40", len(disk.reads))
 	}
 	sameBlocks(t, e.restore(t, "v1.ldisk", "v2.ldelta"), saved)
+}
+
+// TestUpdateService: the service is written with the accounts of the panel, in
+// Save Mode and out of it, and the task says where it went.
+func TestUpdateService(t *testing.T) {
+	e := newCloneEnv(t)
+	ctx := context.Background()
+	if err := e.s.SetSetting(ctx, store.SettingPlayerUser, "Player"); err != nil {
+		t.Fatal(err)
+	}
+	for _, saving := range []bool{false, true} {
+		s := savingStore("win11", nil)
+		if !saving {
+			s.state.Save = ""
+		}
+		if _, err := e.runSave(t, store.TaskUpdateService, "", s); err != nil {
+			t.Fatalf("saving %v: %v", saving, err)
+		}
+		if s.updated != 1 || s.accounts == nil || s.accounts.PlayerUser != "Player" {
+			t.Fatalf("saving %v: updated %d, accounts %+v", saving, s.updated, s.accounts)
+		}
+		hosts, _ := e.s.Hosts(ctx)
+		if msg := hosts[0].LastTask.Message; strings.Contains(msg, "Save Mode") != saving {
+			t.Fatalf("saving %v: message %q", saving, msg)
+		}
+	}
+	// A PC without a deploy into VHDX has no service to update.
+	s := savingStore("win11", nil)
+	s.state = proto.StoreState{}
+	if _, err := e.runSave(t, store.TaskUpdateService, "", s); err == nil || s.updated != 0 {
+		t.Fatalf("err %v, updated %d", err, s.updated)
+	}
 }
 
 func TestSaveImageNeedsSaveMode(t *testing.T) {

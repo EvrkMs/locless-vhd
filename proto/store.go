@@ -31,6 +31,11 @@ const (
 	TaskKindSaveDiscard = "savediscard"
 )
 
+// TaskKindUpdateService writes the agent of this server as the reset service
+// into the PC: into local, with a fresh differencing disk on top, or into
+// save.vhdx in Save Mode. Nothing else on the store changes.
+const TaskKindUpdateService = "updateservice"
+
 // The layout of a prepared disk.
 const (
 	// StoreLabel is the label of the NTFS volume that holds the virtual disks.

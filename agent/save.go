@@ -33,6 +33,10 @@ type savedStore interface {
 	OpenSaved() (source, error)
 	// Changes reads which blocks save.vhdx holds itself, with nothing attached.
 	Changes() (proto.VHDXLayout, error)
+	// UpdateService writes this agent as the reset service: into save.vhdx in Save
+	// Mode, otherwise into local, which takes a fresh differencing disk, as one
+	// made on top of the old local is no longer valid.
+	UpdateService(accounts *proto.Accounts) error
 	Close() error
 }
 
@@ -114,6 +118,31 @@ func (w *worker) runSaveDiscard(task *proto.AgentTask) error {
 	}
 	w.screen.log(message)
 	w.showResult("Готово", "Компьютер загрузится как обычно, со сбросом")
+	return nil
+}
+
+// runUpdateService brings the reset service of the PC to this agent.
+func (w *worker) runUpdateService(task *proto.AgentTask) error {
+	w.saveScreen("Обновление службы", "служба сброса LoclessReset")
+	s, st, err := w.openSaveStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	if err := s.UpdateService(task.Accounts); err != nil {
+		return fmt.Errorf("служба не обновлена: %w", err)
+	}
+	where := "в local, сеанс начат заново"
+	if st.Save != "" {
+		where = "в " + proto.SaveFile + ", Save Mode продолжается"
+	}
+	message := "служба сброса обновлена " + where
+	w.setStage(stageFinish)
+	if err := w.finish(task.ID, true, message); err != nil {
+		return err
+	}
+	w.screen.log(message)
+	w.showResult("Готово", "Служба сброса обновлена")
 	return nil
 }
 

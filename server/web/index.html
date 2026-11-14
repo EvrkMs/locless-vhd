@@ -330,7 +330,8 @@ function formatSize(n) {
 const vhdText = size => size ? formatSize(size) : 'по месту на ПК';
 
 const kindText = { agent: 'Проверка связи', clone: 'Клонирование', deploy: 'Развёртывание', deployvhd: 'Развёртывание в VHDX', format: 'Форматирование', prepare: 'Подготовка диска',
-  savemode: 'Включение Save Mode', saveimage: 'Сохранение в образ', savediscard: 'Выход из Save Mode' };
+  savemode: 'Включение Save Mode', saveimage: 'Сохранение в образ', savediscard: 'Выход из Save Mode',
+  updateservice: 'Обновление службы' };
 const stateText = { queued: 'Ждёт загрузки ПК', started: 'Загружается WinPE', running: 'Выполняется', done: 'Готово', failed: 'Ошибка', cancelled: 'Отменена' };
 const stuck = t => !t.finishedAt && t.stage === 'Ошибка'; // the agent waits on its error screen
 
@@ -512,7 +513,9 @@ function hostActions(h) {
     { text: 'Проверить связь', run: () => post('agent') },
     { text: 'Форматировать в том WB', danger: true, confirm: `Стереть диск ${h.name}?`, run: () => post('format') },
     { text: 'Подготовить диск под VHDX', danger: true, confirm: `Стереть диск ${h.name}?`, run: () => post('prepare') },
-    null, ...saveActions(h, post, noImage), null, edit, remove,
+    null, ...saveActions(h, post, noImage),
+    { text: 'Обновить службу', run: () => post('updateservice') },
+    null, edit, remove,
   ];
 }
 

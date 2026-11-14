@@ -623,6 +623,22 @@ func (s *vhdStore) OpenSaved() (source, error) {
 	return &attachedSource{physicalDisk: src, detach: s.d.Close}, nil
 }
 
+// UpdateService writes this agent as the reset service. In Save Mode it goes
+// into save.vhdx, the disk Windows boots from, with nothing on top. Otherwise it
+// goes into local, under the differencing disks: Boot writes it there and makes a
+// fresh differencing disk with the boot entry, as the old ones are made from the
+// local before the change.
+func (s *vhdStore) UpdateService(accounts *proto.Accounts) error {
+	if s.state.Save != "" {
+		return s.d.installReset(proto.SaveFile)
+	}
+	if err := s.d.Boot(s.state, accounts); err != nil {
+		return err
+	}
+	s.state, _ = readState()
+	return nil
+}
+
 // Changes reads the BAT of save.vhdx. The file must not be attached: the BAT of an
 // attached disk may still sit in its log.
 func (s *vhdStore) Changes() (proto.VHDXLayout, error) {

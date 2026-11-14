@@ -44,6 +44,8 @@ const (
 	TaskSaveImage = proto.TaskKindSaveImage
 	// TaskSaveDiscard leaves Save Mode without saving.
 	TaskSaveDiscard = proto.TaskKindSaveDiscard
+	// TaskUpdateService writes the agent of this server as the reset service of the PC.
+	TaskUpdateService = proto.TaskKindUpdateService
 )
 
 // Task statuses.

@@ -302,7 +302,7 @@ func (h *server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Kind {
-	case store.TaskAgent, store.TaskFormat, store.TaskPrepare, store.TaskSaveMode, store.TaskSaveDiscard:
+	case store.TaskAgent, store.TaskFormat, store.TaskPrepare, store.TaskSaveMode, store.TaskSaveDiscard, store.TaskUpdateService:
 		image = "" // Save Mode works on what the store of the PC holds
 	case store.TaskClone, store.TaskDeploy, store.TaskDeployVHD, store.TaskSaveImage:
 		if image == "" {

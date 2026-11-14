@@ -183,6 +183,8 @@ func (w *worker) attempt() error {
 		return w.runSaveImage(task)
 	case proto.TaskKindSaveDiscard:
 		return w.runSaveDiscard(task)
+	case proto.TaskKindUpdateService:
+		return w.runUpdateService(task)
 	}
 	if len(task.Table) > 0 {
 		if err := w.repair(task.Table); err != nil {
